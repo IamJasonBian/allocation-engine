@@ -69,10 +69,13 @@ class TestStopLossAuditor:
         assert coverage['total_positions'] == 3
         assert coverage['total_equity'] == 40000.0
 
-        # Verify coverage by type
+        # Verify coverage by type (proportional coverage)
+        # AAPL: 100% limit coverage = 15000, 100% stop_limit = 15000
+        # BTC: 60% limit coverage (300/500) = 9000
+        # Total limit equity: 15000 + 9000 = 24000
         assert coverage['coverage_by_type']['any_protection']['positions'] == 2  # AAPL, BTC
-        assert coverage['coverage_by_type']['limit']['equity'] == 30000.0  # AAPL + BTC
-        assert coverage['coverage_by_type']['stop_limit']['equity'] == 15000.0  # AAPL only
+        assert pytest.approx(coverage['coverage_by_type']['limit']['equity']) == 24000.0
+        assert pytest.approx(coverage['coverage_by_type']['stop_limit']['equity']) == 15000.0
 
         # Verify largest uncovered
         assert coverage['largest_uncovered']['symbol'] == 'TSLA'
@@ -157,3 +160,43 @@ class TestStopLossAuditor:
         assert detail['order_coverage']['limit']['quantity'] == 700  # 300 + 400
         assert detail['order_coverage']['stop_limit']['quantity'] == 200
         assert pytest.approx(detail['order_coverage']['limit']['pct']) == 70.0
+
+    def test_proportional_coverage_btc_scenario(self, mock_auditor):
+        """Test proportional equity coverage for BTC scenario with partial orders"""
+        positions = [
+            {'symbol': 'BTC', 'quantity': 3562, 'current_price': 31.54, 'equity': 112350.40},
+        ]
+        orders = [
+            # Limit order covering 2150 shares (60.4%)
+            {'symbol': 'BTC', 'side': 'SELL', 'order_type': 'Limit', 'trigger': 'immediate',
+             'quantity': 2150, 'limit_price': 37.99, 'stop_price': None},
+            # Stop Limit order covering 1050 shares (29.5%)
+            {'symbol': 'BTC', 'side': 'SELL', 'order_type': 'Stop Limit', 'trigger': 'stop',
+             'quantity': 1050, 'limit_price': 28.0, 'stop_price': 28.0},
+        ]
+
+        mock_auditor.bot.get_positions.return_value = positions
+        mock_auditor.bot.get_open_orders.return_value = orders
+
+        coverage = mock_auditor.check_coverage()
+
+        # Verify equity coverage is proportional
+        # Limit: 2150/3562 * 112350.40 = ~67,852
+        # Stop Limit: 1050/3562 * 112350.40 = ~33,121
+        # Any protection: max(2150, 1050) / 3562 * 112350.40 = ~67,852
+
+        assert pytest.approx(coverage['coverage_by_type']['limit']['equity'], rel=0.01) == 67852.0
+        assert pytest.approx(coverage['coverage_by_type']['stop_limit']['equity'], rel=0.01) == 33121.0
+        assert pytest.approx(coverage['coverage_by_type']['any_protection']['equity'], rel=0.01) == 67852.0
+
+        # Verify percentages
+        # Limit: 67852 / 112350.40 = ~60.4%
+        # Stop Limit: 33121 / 112350.40 = ~29.5%
+        assert pytest.approx(coverage['coverage_by_type']['limit']['pct_equity'], abs=0.5) == 60.4
+        assert pytest.approx(coverage['coverage_by_type']['stop_limit']['pct_equity'], abs=0.5) == 29.5
+
+        # Verify position is marked as protected
+        detail = coverage['details'][0]
+        assert detail['has_any_protection'] is True
+        assert pytest.approx(detail['order_coverage']['limit']['pct'], abs=0.1) == 60.4
+        assert pytest.approx(detail['order_coverage']['stop_limit']['pct'], abs=0.1) == 29.5
