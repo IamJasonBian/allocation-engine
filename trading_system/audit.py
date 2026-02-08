@@ -145,11 +145,19 @@ class StopLossAuditor:
             stop_limit_qty = sum(o['quantity'] for o in position_orders['stop_limit'])
             trailing_stop_qty = sum(o['quantity'] for o in position_orders['trailing_stop'])
 
+            # Calculate profit/loss metrics
+            avg_buy_price = pos.get('avg_buy_price', 0)
+            profit_loss = (pos['current_price'] - avg_buy_price) * pos['quantity']
+            profit_loss_pct = ((pos['current_price'] - avg_buy_price) / avg_buy_price * 100) if avg_buy_price > 0 else 0
+
             position_detail = {
                 'symbol': symbol,
                 'quantity': pos['quantity'],
+                'avg_buy_price': avg_buy_price,
                 'current_price': pos['current_price'],
                 'equity': pos['equity'],
+                'profit_loss': profit_loss,
+                'profit_loss_pct': profit_loss_pct,
                 'order_coverage': {
                     'limit': {
                         'has': has_limit,
@@ -179,17 +187,19 @@ class StopLossAuditor:
                 'has_any_protection': has_any
             }
 
-            # Accumulate equity coverage
-            if has_limit:
-                coverage_equity['limit'] += pos['equity']
-            if has_stop:
-                coverage_equity['stop'] += pos['equity']
-            if has_stop_limit:
-                coverage_equity['stop_limit'] += pos['equity']
-            if has_trailing_stop:
-                coverage_equity['trailing_stop'] += pos['equity']
-            if has_any:
-                coverage_equity['any_protection'] += pos['equity']
+            # Accumulate equity coverage (proportional to quantity covered)
+            # Calculate the proportion of equity covered by each order type
+            total_qty = pos['quantity']
+            if total_qty > 0:
+                coverage_equity['limit'] += (limit_qty / total_qty) * pos['equity']
+                coverage_equity['stop'] += (stop_qty / total_qty) * pos['equity']
+                coverage_equity['stop_limit'] += (stop_limit_qty / total_qty) * pos['equity']
+                coverage_equity['trailing_stop'] += (trailing_stop_qty / total_qty) * pos['equity']
+
+                # For any_protection, use the maximum coverage (avoid double counting)
+                # A share can only be covered once, so take the max covered quantity
+                max_covered_qty = max(limit_qty, stop_qty, stop_limit_qty, trailing_stop_qty)
+                coverage_equity['any_protection'] += (max_covered_qty / total_qty) * pos['equity']
 
             details.append(position_detail)
 
@@ -270,6 +280,8 @@ class StopLossAuditor:
             print(f"   {i}. {pos['symbol']}")
             print(f"      Equity: ${pos['equity']:,.2f}")
             print(f"      Quantity: {pos['quantity']:.0f} @ ${pos['current_price']:.2f}")
+            print(f"      DCA (Avg Buy): ${pos['avg_buy_price']:.2f}")
+            print(f"      P/L: ${pos['profit_loss']:+,.2f} ({pos['profit_loss_pct']:+.2f}%)")
             print(f"      Protected: {status_icon} {'YES' if pos['has_any_protection'] else 'NO'}")
 
             # Show order coverage breakdown

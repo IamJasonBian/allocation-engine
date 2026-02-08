@@ -134,6 +134,9 @@ class SafeCashBot:
                 print(f"   Margin Available: ${margin_available:,.2f}")
                 print(f"   Status: ✅ Cash Only (No positions)")
 
+            # Get positions early for order book calculations
+            positions = self.get_positions()
+
             # Order Book
             open_orders = self.get_open_orders()
             print(f"\n📋 Order Book: {len(open_orders)} open order(s)")
@@ -146,10 +149,15 @@ class SafeCashBot:
                 if buy_orders:
                     print("\n   🟢 BUY ORDERS:")
                     for order in buy_orders:
+                        # Calculate portfolio coverage for buy orders
+                        order_value = order['quantity'] * (order['limit_price'] or 0)
+                        coverage_pct = (order_value / equity * 100) if equity > 0 else 0
+
                         print(f"\n      {order['symbol']} - {order['order_type']}")
                         print(f"         Quantity: {order['quantity']:.0f} shares")
                         if order['limit_price']:
                             print(f"         Limit Price: ${order['limit_price']:.2f}")
+                            print(f"         Order Value: ${order_value:,.2f} ({coverage_pct:.1f}% of portfolio)")
                         if order['stop_price']:
                             print(f"         Stop Price: ${order['stop_price']:.2f}")
                         print(f"         Status: {order['state']}")
@@ -158,19 +166,30 @@ class SafeCashBot:
                 if sell_orders:
                     print("\n   🔴 SELL ORDERS:")
                     for order in sell_orders:
+                        # For sell orders, we need to get the current position to calculate value
+                        # Get current price for the symbol from positions
+                        position = next((p for p in positions if p['symbol'] == order['symbol']), None)
+                        if position:
+                            order_value = order['quantity'] * position['current_price']
+                            coverage_pct = (order_value / equity * 100) if equity > 0 else 0
+                        else:
+                            order_value = None
+                            coverage_pct = 0
+
                         print(f"\n      {order['symbol']} - {order['order_type']}")
                         print(f"         Quantity: {order['quantity']:.0f} shares")
                         if order['limit_price']:
                             print(f"         Limit Price: ${order['limit_price']:.2f}")
                         if order['stop_price']:
                             print(f"         Stop Price: ${order['stop_price']:.2f}")
+                        if order_value is not None:
+                            print(f"         Order Value: ${order_value:,.2f} ({coverage_pct:.1f}% of portfolio)")
                         print(f"         Status: {order['state']}")
                         print(f"         Created: {order['created_at']}")
             else:
                 print("   No open orders")
 
-            # Positions
-            positions = self.get_positions()
+            # Positions (already retrieved above for order book calculations)
             print(f"\n📈 Positions: {len(positions)}")
 
             if positions:
@@ -486,6 +505,57 @@ class SafeCashBot:
         except Exception as e:
             print(f"❌ Order failed: {e}")
             print(f"{'='*70}\n")
+            return None
+
+    def get_portfolio_history(self, span='month', interval='day'):
+        """
+        Get historical portfolio data
+
+        Args:
+            span: Time span - 'day', 'week', 'month', '3month', 'year', '5year', 'all'
+            interval: Data interval - '5minute', '10minute', 'hour', 'day', 'week'
+
+        Returns:
+            Historical portfolio data including equity values over time
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+
+        try:
+            logger.debug(f"Fetching portfolio history: span={span}, interval={interval}")
+
+            # Get account number for debugging
+            account_num = r.profiles.load_account_profile(info='account_number')
+            logger.debug(f"Using account number: {account_num}")
+
+            historical = r.account.get_historical_portfolio(
+                interval=interval,
+                span=span,
+                bounds='regular'
+            )
+
+            if not historical:
+                logger.warning("get_historical_portfolio returned None or empty response")
+                return None
+
+            if 'equity_historicals' not in historical:
+                logger.warning(f"No equity_historicals in response. Keys: {historical.keys() if historical else 'None'}")
+                return None
+
+            # Parse the historical data
+            equity_data = historical['equity_historicals']
+            logger.debug(f"Successfully retrieved {len(equity_data)} historical data points")
+
+            return {
+                'span': span,
+                'interval': interval,
+                'equity_historicals': equity_data,
+                'bounds': historical.get('bounds', 'regular')
+            }
+        except Exception as e:
+            logger.error(f"Error getting portfolio history: {type(e).__name__}: {e}")
+            logger.debug(f"Full exception details:", exc_info=True)
+            print(f"❌ Error getting portfolio history: {e}")
             return None
 
     def get_quote(self, symbol):
