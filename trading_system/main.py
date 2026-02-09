@@ -169,6 +169,8 @@ class TradingSystem:
             self._execute_buy_order(symbol, order)
         elif order['action'] == 'sell':
             self._execute_sell_order(symbol, order)
+        elif order['action'] == 'stop_limit_sell' and signal.get('cancel_order_id'):
+            self._execute_stale_refresh(symbol, signal)
         elif order['action'] == 'stop_limit_sell':
             self._execute_stop_limit_sell_order(symbol, order)
             # Execute paired buy if present
@@ -329,6 +331,26 @@ class TradingSystem:
                     symbol, 'sell', 'placed', order_id
                 )
                 print(f"Order placed: {order_id}")
+
+    def _execute_stale_refresh(self, symbol: str, signal: Dict):
+        """Cancel a stale order and place replacement stop-limit sell + paired buy"""
+        cancel_id = signal['cancel_order_id']
+        order = signal['order']
+
+        if not self.dry_run:
+            cancelled = self.trading_bot.cancel_order(cancel_id, dry_run=False)
+            if not cancelled:
+                print(f"  Failed to cancel stale order {cancel_id}, skipping replacement")
+                return
+        else:
+            self.trading_bot.cancel_order(cancel_id, dry_run=True)
+
+        # Place replacement stop-limit sell
+        self._execute_stop_limit_sell_order(symbol, order)
+
+        # Place paired buy if present
+        if signal.get('paired_buy'):
+            self._execute_paired_limit_buy(symbol, signal['paired_buy'])
 
     def _execute_paired_limit_buy(self, symbol: str, buy_order: Dict):
         """Execute paired limit buy order below the stop-limit sell"""

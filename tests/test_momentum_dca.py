@@ -1,6 +1,8 @@
 """
 Tests for MomentumDcaStrategy using Ticker/Order entities
 """
+from datetime import datetime, timedelta
+
 from trading_system.strategies.momentum_dca_strategy import MomentumDcaStrategy
 from trading_system.entities.Order import Order
 from trading_system.entities.OrderType import OrderType
@@ -430,3 +432,134 @@ class TestLoadBrokerSellOrders:
              'quantity': 5, 'limit_price': 470.0, 'stop_price': None},
         ])
         assert len(mgr.get_ticker('SPY').orders) == 2
+
+
+def _sell_order_with_age(size, price, order_type=OrderType.STOP_LIMIT,
+                         age_hours=48, order_id='test-order-123'):
+    created_at = datetime.now() - timedelta(hours=age_hours)
+    return Order(size=size, price=price, order_type=order_type,
+                 created_at=created_at, order_id=order_id)
+
+
+class TestStaleOrderRefresh:
+    """Stale orders (>1 day old, price risen above) trigger STALE_REFRESH"""
+
+    def test_stale_order_triggers_refresh(self):
+        strategy = _make_strategy()
+        position = _make_position('SPY', 100, 460.0)
+        # Order at $443 placed 2 days ago; price now $460, ideal stop = $453.10
+        stale = _sell_order_with_age(20, 443.0, age_hours=48)
+        ticker = _make_ticker([stale])
+        signal = strategy.analyze_symbol('SPY', {'current_price': 460.0}, position, ticker)
+        assert signal['signal'] == 'STALE_REFRESH'
+        assert signal['cancel_order_id'] == 'test-order-123'
+        assert signal['order']['action'] == 'stop_limit_sell'
+        expected_stop = round(460.0 * 0.985, 2)
+        assert signal['order']['stop_price'] == expected_stop
+
+    def test_fresh_order_not_refreshed(self):
+        strategy = _make_strategy()
+        position = _make_position('SPY', 100, 460.0)
+        fresh = _sell_order_with_age(20, 443.0, age_hours=12)
+        ticker = _make_ticker([fresh])
+        signal = strategy.analyze_symbol('SPY', {'current_price': 460.0}, position, ticker)
+        assert signal['signal'] != 'STALE_REFRESH'
+
+    def test_stale_but_price_not_risen(self):
+        strategy = _make_strategy()
+        position = _make_position('SPY', 100, 450.0)
+        # $443.25 is 1.5% below $450 — still at ideal offset
+        stale = _sell_order_with_age(20, 443.25, age_hours=48)
+        ticker = _make_ticker([stale])
+        signal = strategy.analyze_symbol('SPY', {'current_price': 450.0}, position, ticker)
+        assert signal['signal'] != 'STALE_REFRESH'
+
+    def test_refresh_includes_paired_buy(self):
+        strategy = _make_strategy()
+        position = _make_position('SPY', 100, 460.0)
+        stale = _sell_order_with_age(20, 443.0, age_hours=48)
+        ticker = _make_ticker([stale])
+        signal = strategy.analyze_symbol('SPY', {'current_price': 460.0}, position, ticker)
+        assert signal['paired_buy'] is not None
+        assert signal['paired_buy']['action'] == 'limit_buy'
+        stop = signal['order']['stop_price']
+        assert signal['paired_buy']['price'] == round(stop - 0.20, 2)
+
+    def test_refresh_preserves_quantity(self):
+        strategy = _make_strategy()
+        position = _make_position('SPY', 100, 460.0)
+        stale = _sell_order_with_age(30, 443.0, age_hours=48)
+        ticker = _make_ticker([stale])
+        signal = strategy.analyze_symbol('SPY', {'current_price': 460.0}, position, ticker)
+        assert signal['order']['quantity'] == 30
+
+    def test_refresh_uses_hedge_symbol(self):
+        strategy = _make_strategy(hedge_symbol_map={'SPY': 'SH'})
+        position = _make_position('SPY', 100, 460.0)
+        stale = _sell_order_with_age(20, 443.0, age_hours=48)
+        ticker = _make_ticker([stale])
+        signal = strategy.analyze_symbol('SPY', {'current_price': 460.0}, position, ticker)
+        assert signal['order']['symbol'] == 'SH'
+
+    def test_order_without_created_at_not_refreshed(self):
+        strategy = _make_strategy()
+        position = _make_position('SPY', 100, 460.0)
+        old_style = _sell_order(20, 443.0, OrderType.STOP_LIMIT)
+        ticker = _make_ticker([old_style])
+        signal = strategy.analyze_symbol('SPY', {'current_price': 460.0}, position, ticker)
+        assert signal['signal'] != 'STALE_REFRESH'
+
+    def test_stale_refresh_priority_over_covered(self):
+        """Even if coverage >= 20%, stale orders should still be refreshed"""
+        strategy = _make_strategy()
+        position = _make_position('SPY', 100, 460.0)
+        # 25/100 = 25% > 20% threshold, but order is stale
+        stale = _sell_order_with_age(25, 443.0, age_hours=48)
+        ticker = _make_ticker([stale])
+        signal = strategy.analyze_symbol('SPY', {'current_price': 460.0}, position, ticker)
+        assert signal['signal'] == 'STALE_REFRESH'
+
+    def test_format_shows_stale_refresh(self):
+        strategy = _make_strategy()
+        cancel_order = _sell_order_with_age(20, 443.0, age_hours=48, order_id='abc-123')
+        signal = {
+            'signal': 'STALE_REFRESH', 'reason': 'test',
+            'cancel_order_id': 'abc-123',
+            'cancel_order': cancel_order,
+            'order': {'action': 'stop_limit_sell', 'symbol': 'SPY', 'quantity': 20,
+                      'stop_price': 453.10, 'limit_price': 453.10, 'current_price': 460.0},
+            'paired_buy': {'action': 'limit_buy', 'symbol': 'SPY', 'quantity': 20,
+                           'price': 452.90, 'current_price': 460.0},
+        }
+        output = strategy.format_signal('SPY', signal)
+        assert 'STALE_REFRESH' in output
+        assert 'abc-123' in output
+        assert 'Stale Order' in output
+
+
+class TestLoadBrokerSellOrdersTimestamp:
+    """Verify created_at and order_id pass through to Order entities"""
+
+    def test_created_at_passed_through(self):
+        mgr = StateManager()
+        broker_orders = [
+            {'symbol': 'SPY', 'side': 'SELL', 'order_type': 'Stop Limit',
+             'quantity': 20, 'limit_price': 443.0, 'stop_price': 445.0,
+             'created_at': '2026-02-07 10:30:00', 'order_id': 'abc-123'},
+        ]
+        mgr.load_broker_sell_orders('SPY', broker_orders)
+        order = mgr.get_ticker('SPY').orders[0]
+        assert order.created_at is not None
+        assert order.created_at.year == 2026
+        assert order.order_id == 'abc-123'
+
+    def test_missing_created_at_is_none(self):
+        mgr = StateManager()
+        broker_orders = [
+            {'symbol': 'SPY', 'side': 'SELL', 'order_type': 'Limit',
+             'quantity': 10, 'limit_price': 460.0, 'stop_price': None},
+        ]
+        mgr.load_broker_sell_orders('SPY', broker_orders)
+        order = mgr.get_ticker('SPY').orders[0]
+        assert order.created_at is None
+        assert order.order_id is None
