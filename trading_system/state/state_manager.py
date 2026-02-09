@@ -163,7 +163,19 @@ class StateManager:
             order_type = ORDER_TYPE_MAP.get(raw.get('order_type'), OrderType.MARKET)
             price = raw.get('limit_price') or raw.get('stop_price') or 0
             size = float(raw.get('quantity', 0))
-            orders.append(Order(size=size, price=price, order_type=order_type))
+
+            created_at = None
+            created_at_str = raw.get('created_at')
+            if created_at_str and created_at_str != 'N/A':
+                try:
+                    created_at = datetime.strptime(created_at_str, '%Y-%m-%d %H:%M:%S')
+                except ValueError:
+                    pass
+
+            orders.append(Order(
+                size=size, price=price, order_type=order_type,
+                created_at=created_at, order_id=raw.get('order_id'),
+            ))
 
         self.tickers[symbol] = Ticker(orders)
 
