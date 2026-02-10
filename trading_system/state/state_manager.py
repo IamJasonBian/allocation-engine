@@ -106,8 +106,8 @@ class StateManager:
             if status in ['filled', 'cancelled']:
                 symbol_state['orders'][order_key] = None
                 for order in ticker.orders:
-                    if order.is_valid:
-                        order.mark_invalid()
+                    if order.is_signal:
+                        order.deactivate()
                         break
 
             self.state['last_updated'] = datetime.now().isoformat()

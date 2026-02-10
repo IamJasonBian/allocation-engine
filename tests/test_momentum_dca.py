@@ -113,7 +113,7 @@ class TestCoverageCalculation:
         strategy = _make_strategy()
         position = _make_position('SPY', 100, 450.0)
         order = _sell_order(25, 460.0)
-        order.mark_invalid()
+        order.deactivate()
         ticker = _make_ticker([order])
         signal = strategy.analyze_symbol('SPY', {'current_price': 450.0}, position, ticker)
         assert signal['signal'] == 'COVER_GAP'

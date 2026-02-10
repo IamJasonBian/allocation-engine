@@ -29,7 +29,7 @@ class TestGetSignalOrders:
     def test_filters_invalid(self):
         orders = make_orders()
         ticker = Ticker(orders)
-        orders[1].mark_invalid()
+        orders[1].deactivate()
         valid = ticker.get_signal_orders()
         assert len(valid) == 2
         assert orders[1] not in valid
@@ -40,11 +40,11 @@ class TestOrderValidity:
     def test_orders_start_valid(self):
         orders = make_orders()
         ticker = Ticker(orders)
-        assert all(order.is_valid for order in orders)
+        assert all(order.is_signal for order in orders)
 
-    def test_mark_invalid(self):
+    def test_deactivate(self):
         orders = make_orders()
         ticker = Ticker(orders)
-        orders[0].mark_invalid()
-        assert orders[0].is_valid is False
+        orders[0].deactivate()
+        assert orders[0].is_signal is False
         assert len(ticker.get_signal_orders()) == 2

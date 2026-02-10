@@ -11,7 +11,7 @@ class Ticker:
         return self.orders
 
     def get_signal_orders(self):
-        return [order for order in self.orders if order.is_valid]
+        return [order for order in self.orders if order.is_signal]
 
     def write_to_blob(self, blob):
         pass
