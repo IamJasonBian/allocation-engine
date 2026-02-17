@@ -139,7 +139,7 @@ class TestGapQuantity:
         strategy = _make_strategy()
         position = _make_position('BTC', 3262, 31.0)
         signal = strategy.analyze_symbol('BTC', {'current_price': 31.0}, position, _make_ticker())
-        assert signal['order']['quantity'] == 300  # capped to lot_size
+        assert signal['order']['quantity'] == 200  # capped to lot_size
         assert isinstance(signal['order']['quantity'], int)
 
     def test_stock_whole_shares(self):
@@ -260,7 +260,7 @@ class TestEdgeCases:
 
 
 class TestPairedBuyOrder:
-    """COVER_GAP should include a paired limit buy 0.2% below stop price"""
+    """COVER_GAP should include a paired limit buy $0.35 below stop price"""
 
     def test_cover_gap_includes_paired_buy(self):
         strategy = _make_strategy()
@@ -277,7 +277,7 @@ class TestPairedBuyOrder:
         stop_price = signal['order']['stop_price']
         buy_price = signal['paired_buy']['price']
         assert buy_price < stop_price
-        expected = round(stop_price - 0.20, 2)
+        expected = round(stop_price - 0.35, 2)
         assert buy_price == expected
 
     def test_paired_buy_same_quantity(self):

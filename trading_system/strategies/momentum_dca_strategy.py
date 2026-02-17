@@ -30,8 +30,8 @@ class MomentumDcaLongStrategy(BaseStrategy):
     def __init__(self, symbols: List[str], coverage_threshold: float = 0.20,
                  stop_offset_pct: float = 0.01, proximity_pct: float = 0.0075,
                  coverage_range_pct: float = 0.08,
-                 buy_offset: float = 0.20,
-                 lot_size: int = 100,
+                 buy_offset: float = 0.35,
+                 lot_size: int = 200,
                  hedge_symbol_map: Dict = None):
         self.symbols = symbols
         self.coverage_threshold = coverage_threshold
