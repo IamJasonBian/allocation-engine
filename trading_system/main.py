@@ -444,6 +444,13 @@ class TradingSystem:
 
     def run_once(self):
         """Run trading system once for all symbols"""
+        # Refresh dashboard data at the start so the UI has data immediately
+        if self.dashboard:
+            try:
+                fetch_and_write_indicators(self.symbols)
+            except Exception as e:
+                print(f"  [indicators] Error refreshing dashboard: {e}")
+
         if self.verbose:
             print(f"\n{'='*70}")
             print("RUNNING TRADING SYSTEM")
