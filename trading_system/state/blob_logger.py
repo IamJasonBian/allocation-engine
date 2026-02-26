@@ -29,7 +29,9 @@ def _get_config():
 
 
 def _serialize_state(state_manager, order_book=None, portfolio=None,
-                     drift_metrics=None, recent_orders=None) -> dict:
+                     drift_metrics=None, recent_orders=None,
+                     fill_rate=None, execution_log=None,
+                     gamma_snapshot=None) -> dict:
     """Serialize StateManager state to a JSON-safe dictionary."""
     snapshot = {
         "timestamp": datetime.now().isoformat(),
@@ -51,6 +53,12 @@ def _serialize_state(state_manager, order_book=None, portfolio=None,
         snapshot["drift_metrics"] = drift_metrics
     if recent_orders:
         snapshot["recent_orders"] = recent_orders
+    if fill_rate is not None:
+        snapshot["fill_rate"] = fill_rate
+    if execution_log is not None:
+        snapshot["execution_log"] = execution_log
+    if gamma_snapshot is not None:
+        snapshot["gamma_snapshot"] = gamma_snapshot
     return snapshot
 
 
@@ -62,12 +70,16 @@ def _serialize_value(obj):
 
 
 def _log_local(state_manager, order_book=None, portfolio=None,
-               drift_metrics=None, recent_orders=None):
+               drift_metrics=None, recent_orders=None,
+               fill_rate=None, execution_log=None,
+               gamma_snapshot=None):
     """Write state snapshot to a local JSON file under state_logs/."""
     LOCAL_LOG_DIR.mkdir(exist_ok=True)
     snapshot = _serialize_state(state_manager, order_book=order_book,
                                 portfolio=portfolio, drift_metrics=drift_metrics,
-                                recent_orders=recent_orders)
+                                recent_orders=recent_orders,
+                                fill_rate=fill_rate, execution_log=execution_log,
+                                gamma_snapshot=gamma_snapshot)
     blob_key = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
     payload = json.dumps(snapshot, default=_serialize_value, indent=2)
 
@@ -78,7 +90,9 @@ def _log_local(state_manager, order_book=None, portfolio=None,
 
 
 def _log_remote(state_manager, order_book=None, portfolio=None,
-                drift_metrics=None, recent_orders=None):
+                drift_metrics=None, recent_orders=None,
+                fill_rate=None, execution_log=None,
+                gamma_snapshot=None):
     """Upload state snapshot to Netlify Blobs."""
     config = _get_config()
     if not config:
@@ -88,7 +102,9 @@ def _log_remote(state_manager, order_book=None, portfolio=None,
 
     snapshot = _serialize_state(state_manager, order_book=order_book,
                                 portfolio=portfolio, drift_metrics=drift_metrics,
-                                recent_orders=recent_orders)
+                                recent_orders=recent_orders,
+                                fill_rate=fill_rate, execution_log=execution_log,
+                                gamma_snapshot=gamma_snapshot)
     blob_key = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
     payload = json.dumps(snapshot, default=_serialize_value)
 
@@ -109,15 +125,21 @@ def _log_remote(state_manager, order_book=None, portfolio=None,
 
 
 def log_state_to_blob(state_manager, live=False, order_book=None,
-                      portfolio=None, drift_metrics=None, recent_orders=None):
+                      portfolio=None, drift_metrics=None, recent_orders=None,
+                      fill_rate=None, execution_log=None,
+                      gamma_snapshot=None):
     """Log StateManager state. Writes locally in dry-run, uploads to Netlify Blobs when live."""
     if live:
         return _log_remote(state_manager, order_book=order_book,
                            portfolio=portfolio, drift_metrics=drift_metrics,
-                           recent_orders=recent_orders)
+                           recent_orders=recent_orders,
+                           fill_rate=fill_rate, execution_log=execution_log,
+                           gamma_snapshot=gamma_snapshot)
     return _log_local(state_manager, order_book=order_book,
                       portfolio=portfolio, drift_metrics=drift_metrics,
-                      recent_orders=recent_orders)
+                      recent_orders=recent_orders,
+                      fill_rate=fill_rate, execution_log=execution_log,
+                      gamma_snapshot=gamma_snapshot)
 
 
 def upload_blob(store_name, blob_key, data):

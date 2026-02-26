@@ -21,6 +21,8 @@ from trading_system.strategies.breakout_strategy import BreakoutStrategy  # noqa
 from trading_system.strategies.momentum_dca_strategy import MomentumDcaLongStrategy  # noqa: E402
 from trading_system.state.state_manager import StateManager  # noqa: E402
 from trading_system.state.blob_logger import log_state_to_blob  # noqa: E402
+from trading_system.state.order_book import OrderBook  # noqa: E402
+from trading_system.state.gamma_client import fetch_gamma_orders, extract_gamma_prices  # noqa: E402
 from trading_system.market_indicators import fetch_and_write_indicators  # noqa: E402
 from trading_system.utils.slack import send_slack_alert  # noqa: E402
 from trading_system.entities.OrderType import OrderSide  # noqa: E402
@@ -61,6 +63,7 @@ class TradingSystem:
         self.metrics_calculator = MetricsCalculator()
         self.state_manager = StateManager()
         self.trading_bot = SafeCashBot()
+        self.order_book = OrderBook()
 
         if strategy_name == 'momentum_dca_long':
             self.strategy = MomentumDcaLongStrategy(symbols)
@@ -230,6 +233,7 @@ class TradingSystem:
         """Cancel ALL open orders for symbol on the given side.
 
         Returns (cancelled_count, total_qty_cancelled).
+        Skips actual cancellation in dry-run mode.
         """
         cancelled = 0
         qty_cancelled = 0
@@ -237,10 +241,16 @@ class TradingSystem:
             if (order.get('symbol') == symbol
                     and order.get('side') == side):
                 order_id = order.get('order_id')
-                if order_id and self.trading_bot.cancel_order_by_id(order_id):
-                    cancelled += 1
-                    qty_cancelled += int(float(order.get('quantity', 0)))
-                    print(f"  Cancelled {side} {order_id} qty={int(float(order.get('quantity', 0)))}")
+                if order_id:
+                    qty = int(float(order.get('quantity', 0)))
+                    if self.dry_run:
+                        cancelled += 1
+                        qty_cancelled += qty
+                        print(f"  [DRY RUN] Would cancel {side} {order_id} qty={qty}")
+                    elif self.trading_bot.cancel_order_by_id(order_id):
+                        cancelled += 1
+                        qty_cancelled += qty
+                        print(f"  Cancelled {side} {order_id} qty={qty}")
         return cancelled, qty_cancelled
 
     def _handle_order_replacement(self, symbol: str, signal: Dict, symbol_orders: list):
@@ -576,6 +586,20 @@ class TradingSystem:
 
         recent_orders = self.trading_bot.get_recent_orders(days=7)
 
+        # Seed order book from history on first tick, then diff each tick
+        self.order_book.seed_from_history(recent_orders)
+        tick_summary = self.order_book.update(open_orders, recent_orders)
+
+        # Print fill/cancel events detected this tick
+        if tick_summary['fills']:
+            for f in tick_summary['fills']:
+                avg = f.get('average_price')
+                price_str = f" @ ${avg:.2f}" if avg else ""
+                print(f"  [fill] {f['symbol']} {f['side']} x{f.get('quantity', '?')}{price_str}")
+        if tick_summary['cancellations']:
+            for c in tick_summary['cancellations']:
+                print(f"  [cancel] {c['symbol']} {c['side']} x{c.get('quantity', '?')} ({c.get('state', '')})")
+
         # Print order book before processing through state manager
         if open_orders:
             # Filter to --ticker symbols when not in verbose mode
@@ -647,6 +671,21 @@ class TradingSystem:
         # Compute drift metrics from cached daily bars (if available)
         drift_metrics = self._compute_drift_metrics()
 
+        # Fetch gamma runtime snapshot and compute fill rate
+        gamma_data = fetch_gamma_orders()
+        fill_rate = self.order_book.get_fill_rate()
+        execution_log = self.order_book.get_execution_log(limit=50)
+
+        if self.verbose and fill_rate:
+            print(f"\n  Fill Rate: {fill_rate['fill_rate_pct']:.1f}% "
+                  f"({fill_rate['total_filled']}/{fill_rate['total_submitted']} filled, "
+                  f"{fill_rate['total_cancelled']} cancelled)")
+
+        if self.verbose and gamma_data:
+            gamma_prices = extract_gamma_prices(gamma_data)
+            if gamma_prices:
+                print(f"  Gamma prices: {gamma_prices}")
+
         log_state_to_blob(
             self.state_manager,
             live=not self.dry_run,
@@ -654,6 +693,9 @@ class TradingSystem:
             portfolio=portfolio_data,
             drift_metrics=drift_metrics,
             recent_orders=recent_orders,
+            fill_rate=fill_rate,
+            execution_log=execution_log,
+            gamma_snapshot=gamma_data,
         )
 
         # Refresh dashboard market indicators
@@ -1060,6 +1102,11 @@ def main():
         '--recent', type=int, default=None, metavar='DAYS',
         help='Limit backtest to the last N daily bars (e.g. --recent 90)'
     )
+    parser.add_argument(
+        '--audit',
+        action='store_true',
+        help='Run order coverage audit and exit'
+    )
 
     args = parser.parse_args()
 
@@ -1094,6 +1141,13 @@ def main():
         dashboard=args.dashboard,
         recent_days=args.recent,
     )
+
+    # Run audit if requested (standalone mode — exit after)
+    if args.audit:
+        from trading_system.audit import StopLossAuditor
+        auditor = StopLossAuditor()
+        exit_code = auditor.run_audit()
+        sys.exit(exit_code)
 
     # Run backtest if requested (standalone mode — exit after)
     if args.backtest:
