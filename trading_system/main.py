@@ -26,6 +26,10 @@ from trading_system.state.gamma_client import fetch_gamma_orders, extract_gamma_
 from trading_system.market_indicators import fetch_and_write_indicators  # noqa: E402
 from trading_system.utils.slack import send_slack_alert  # noqa: E402
 from trading_system.entities.OrderType import OrderSide  # noqa: E402
+from trading_system.execution.price_discovery import PriceDiscovery  # noqa: E402
+from trading_system.execution.slippage_controller import SlippageController  # noqa: E402
+from trading_system.execution.fill_monitor import FillMonitor  # noqa: E402
+from trading_system.execution.execution_manager import ExecutionManager  # noqa: E402
 from utils.safe_cash_bot import SafeCashBot  # noqa: E402
 
 
@@ -64,6 +68,16 @@ class TradingSystem:
         self.state_manager = StateManager()
         self.trading_bot = SafeCashBot()
         self.order_book = OrderBook()
+
+        # Execution layer — price discovery, fill monitoring, repricing
+        self.price_discovery = PriceDiscovery(self.data_provider, self.trading_bot)
+        self.slippage_controller = SlippageController()
+        self.fill_monitor = FillMonitor(self.price_discovery)
+        self.execution_manager = ExecutionManager(
+            self.trading_bot, self.price_discovery,
+            self.slippage_controller, self.fill_monitor,
+            dry_run=self.dry_run,
+        )
 
         if strategy_name == 'momentum_dca_long':
             self.strategy = MomentumDcaLongStrategy(symbols)
@@ -186,8 +200,10 @@ class TradingSystem:
 
         if order['action'] == 'buy':
             self._execute_buy_order(symbol, order)
+            self.execution_manager.submit(symbol, order)
         elif order['action'] == 'sell':
             self._execute_sell_order(symbol, order)
+            self.execution_manager.submit(symbol, order)
         elif order['action'] == 'stop_limit_sell':
             has_paired_buy = signal.get('paired_buy') is not None
 
@@ -222,12 +238,15 @@ class TradingSystem:
                 else:
                     self._execute_paired_limit_buy(symbol, paired_buy)
                     self._execute_stop_limit_sell_order(symbol, order)
+                self.execution_manager.submit(symbol, order, paired_buy=paired_buy)
             else:
                 self._execute_stop_limit_sell_order(symbol, order)
+                self.execution_manager.submit(symbol, order)
         elif order['action'] == 'limit_sell':
             # Cancel existing sells before resubmit
             self._cancel_orders_by_side(symbol, 'SELL', open_orders)
             self._execute_limit_sell_resubmit(symbol, order)
+            self.execution_manager.submit(symbol, order)
 
     def _cancel_orders_by_side(self, symbol: str, side: str, open_orders: list) -> tuple:
         """Cancel ALL open orders for symbol on the given side.
@@ -590,6 +609,9 @@ class TradingSystem:
         self.order_book.seed_from_history(recent_orders)
         tick_summary = self.order_book.update(open_orders, recent_orders)
 
+        # Check pending execution contexts for fills, crossovers, repricing
+        self.execution_manager.check_pending_orders(open_orders, recent_orders)
+
         # Print fill/cancel events detected this tick
         if tick_summary['fills']:
             for f in tick_summary['fills']:
@@ -671,10 +693,13 @@ class TradingSystem:
         # Compute drift metrics from cached daily bars (if available)
         drift_metrics = self._compute_drift_metrics()
 
-        # Fetch gamma runtime snapshot and compute fill rate
+        # Fetch gamma runtime snapshot and feed into price discovery
         gamma_data = fetch_gamma_orders()
+        self.price_discovery.update_gamma_prices(gamma_data)
+
         fill_rate = self.order_book.get_fill_rate()
         execution_log = self.order_book.get_execution_log(limit=50)
+        execution_summary = self.execution_manager.get_pending_summary()
 
         if self.verbose and fill_rate:
             print(f"\n  Fill Rate: {fill_rate['fill_rate_pct']:.1f}% "
@@ -696,6 +721,7 @@ class TradingSystem:
             fill_rate=fill_rate,
             execution_log=execution_log,
             gamma_snapshot=gamma_data,
+            execution_summary=execution_summary,
         )
 
         # Refresh dashboard market indicators

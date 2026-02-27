@@ -42,3 +42,9 @@ def send_slack_alert(message, emoji=":warning:"):
     except requests.RequestException as e:
         print(f"Failed to send Slack alert: {e}")
         return False
+
+
+def send_crossover_alert(message):
+    """Send crossover alert mentioning @Jason Bian."""
+    tagged = f"@Jason Bian {message}"
+    return send_slack_alert(tagged, emoji=":rotating_light:")
