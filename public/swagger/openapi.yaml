@@ -194,6 +194,11 @@ components:
         stop_price:
           type: number
           nullable: true
+        source:
+          type: string
+          enum: [engine, external]
+          nullable: true
+          description: "Order source: engine (placed by trading engine) or external (placed manually)"
 
     OptionPosition:
       type: object

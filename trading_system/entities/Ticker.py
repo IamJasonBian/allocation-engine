@@ -1,5 +1,5 @@
 from .Order import Order
-from .OrderType import OrderType
+from .OrderType import OrderType, OrderSource
 
 
 class Ticker:
@@ -12,6 +12,12 @@ class Ticker:
 
     def get_signal_orders(self):
         return [order for order in self.orders if order.is_valid]
+
+    def get_engine_orders(self):
+        return [order for order in self.orders if order.source == OrderSource.ENGINE]
+
+    def get_external_orders(self):
+        return [order for order in self.orders if order.source == OrderSource.EXTERNAL]
 
     def write_to_blob(self, blob):
         pass

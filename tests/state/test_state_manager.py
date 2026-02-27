@@ -1,6 +1,6 @@
 from trading_system.state.state_manager import StateManager
 from trading_system.entities.Order import Order
-from trading_system.entities.OrderType import OrderType, OrderSide
+from trading_system.entities.OrderType import OrderType, OrderSide, OrderSource
 from trading_system.entities.Ticker import Ticker
 
 
@@ -137,3 +137,48 @@ class TestUpdateOrderStatus:
         mgr.update_order_status('BTC', 'sell', 'cancelled')
         ticker = mgr.get_ticker('BTC')
         assert len(ticker.get_signal_orders()) == 0
+
+
+class TestSourceTagging:
+    """load_broker_orders tags source when signal_order_ids is provided."""
+
+    def test_engine_and_external_tagged(self):
+        mgr = StateManager()
+        broker_orders = [
+            {'symbol': 'BTC', 'side': 'SELL', 'order_type': 'Limit',
+             'quantity': '100', 'limit_price': 31.0, 'order_id': 'ORD-001'},
+            {'symbol': 'BTC', 'side': 'BUY', 'order_type': 'Limit',
+             'quantity': '50', 'limit_price': 28.0, 'order_id': 'ORD-002'},
+            {'symbol': 'BTC', 'side': 'BUY', 'order_type': 'Market',
+             'quantity': '25', 'order_id': 'ORD-003'},
+        ]
+        mgr.load_broker_orders('BTC', broker_orders,
+                               signal_order_ids={'ORD-001', 'ORD-003'})
+        ticker = mgr.get_ticker('BTC')
+        assert ticker.orders[0].source == OrderSource.ENGINE
+        assert ticker.orders[1].source == OrderSource.EXTERNAL
+        assert ticker.orders[2].source == OrderSource.ENGINE
+
+    def test_source_none_without_signal_ids(self):
+        mgr = StateManager()
+        broker_orders = [
+            {'symbol': 'BTC', 'side': 'SELL', 'order_type': 'Limit',
+             'quantity': '100', 'limit_price': 31.0, 'order_id': 'ORD-001'},
+        ]
+        mgr.load_broker_orders('BTC', broker_orders)
+        ticker = mgr.get_ticker('BTC')
+        assert ticker.orders[0].source is None
+
+    def test_filtering_by_source_after_load(self):
+        mgr = StateManager()
+        broker_orders = [
+            {'symbol': 'BTC', 'side': 'SELL', 'order_type': 'Limit',
+             'quantity': '100', 'limit_price': 31.0, 'order_id': 'ORD-001'},
+            {'symbol': 'BTC', 'side': 'BUY', 'order_type': 'Limit',
+             'quantity': '50', 'limit_price': 28.0, 'order_id': 'ORD-002'},
+        ]
+        mgr.load_broker_orders('BTC', broker_orders,
+                               signal_order_ids={'ORD-001'})
+        ticker = mgr.get_ticker('BTC')
+        assert len(ticker.get_engine_orders()) == 1
+        assert len(ticker.get_external_orders()) == 1

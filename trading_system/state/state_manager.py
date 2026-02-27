@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Dict, List, Optional
 
 from trading_system.entities.Order import Order
-from trading_system.entities.OrderType import OrderType, OrderSide
+from trading_system.entities.OrderType import OrderType, OrderSide, OrderSource
 from trading_system.entities.Ticker import Ticker
 
 
@@ -138,12 +138,16 @@ class StateManager:
         }
         self.state['last_updated'] = datetime.now().isoformat()
 
-    def load_broker_orders(self, symbol: str, broker_orders: List[Dict]):
+    def load_broker_orders(self, symbol: str, broker_orders: List[Dict],
+                           signal_order_ids: Optional[set] = None):
         """Convert raw broker orders into Order entities on the symbol's Ticker.
 
         Filters to the given symbol, maps broker order_type strings to
         OrderType enums, and uses limit_price (or stop_price) as Order.price.
         Replaces any existing orders on the Ticker.
+
+        If signal_order_ids is provided, orders whose order_id is in the set
+        are tagged source=ENGINE; all others are tagged source=EXTERNAL.
         """
         self.get_symbol_state(symbol)
 
@@ -170,8 +174,14 @@ class StateManager:
             side = SIDE_MAP.get(raw.get('side'))
             order_id = raw.get('order_id')
             created_at = raw.get('created_at')
+
+            source = None
+            if signal_order_ids is not None:
+                source = OrderSource.ENGINE if order_id in signal_order_ids else OrderSource.EXTERNAL
+
             orders.append(Order(size=size, price=price, order_type=order_type,
-                                side=side, order_id=order_id, created_at=created_at))
+                                side=side, order_id=order_id, created_at=created_at,
+                                source=source))
 
         self.tickers[symbol] = Ticker(orders)
 
