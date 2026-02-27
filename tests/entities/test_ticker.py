@@ -1,5 +1,5 @@
 from trading_system.entities.Order import Order
-from trading_system.entities.OrderType import OrderType
+from trading_system.entities.OrderType import OrderType, OrderSource
 from trading_system.entities.Ticker import Ticker
 
 def make_orders():
@@ -35,6 +35,54 @@ class TestGetSignalOrders:
         assert orders[1] not in valid
         assert orders[0] in valid
         assert orders[2] in valid
+
+class TestGetEngineOrders:
+    def test_returns_engine_orders(self):
+        orders = [
+            Order(100, 50.0, OrderType.MARKET, source=OrderSource.ENGINE),
+            Order(200, 75.0, OrderType.LIMIT, source=OrderSource.EXTERNAL),
+            Order(150, 60.0, OrderType.STOP, source=OrderSource.ENGINE),
+        ]
+        ticker = Ticker(orders)
+        engine = ticker.get_engine_orders()
+        assert len(engine) == 2
+        assert all(o.source == OrderSource.ENGINE for o in engine)
+
+    def test_empty_when_no_engine_orders(self):
+        orders = [
+            Order(100, 50.0, OrderType.MARKET, source=OrderSource.EXTERNAL),
+        ]
+        ticker = Ticker(orders)
+        assert ticker.get_engine_orders() == []
+
+    def test_excludes_none_source(self):
+        orders = [
+            Order(100, 50.0, OrderType.MARKET),
+            Order(200, 75.0, OrderType.LIMIT, source=OrderSource.ENGINE),
+        ]
+        ticker = Ticker(orders)
+        assert len(ticker.get_engine_orders()) == 1
+
+
+class TestGetExternalOrders:
+    def test_returns_external_orders(self):
+        orders = [
+            Order(100, 50.0, OrderType.MARKET, source=OrderSource.ENGINE),
+            Order(200, 75.0, OrderType.LIMIT, source=OrderSource.EXTERNAL),
+            Order(150, 60.0, OrderType.STOP, source=OrderSource.EXTERNAL),
+        ]
+        ticker = Ticker(orders)
+        external = ticker.get_external_orders()
+        assert len(external) == 2
+        assert all(o.source == OrderSource.EXTERNAL for o in external)
+
+    def test_empty_when_no_external_orders(self):
+        orders = [
+            Order(100, 50.0, OrderType.MARKET, source=OrderSource.ENGINE),
+        ]
+        ticker = Ticker(orders)
+        assert ticker.get_external_orders() == []
+
 
 class TestOrderValidity:
     def test_orders_start_valid(self):

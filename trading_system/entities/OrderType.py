@@ -15,4 +15,6 @@ class OrderSide(Enum):
     BUY = "buy"
     SELL = "sell"
 
-
+class OrderSource(Enum):
+    ENGINE = "engine"
+    EXTERNAL = "external"
