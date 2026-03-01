@@ -29,19 +29,34 @@ def _get_config():
 
 
 def _serialize_state(state_manager, order_book=None, portfolio=None,
-                     drift_metrics=None, recent_orders=None) -> dict:
+                     drift_metrics=None, recent_orders=None,
+                     recent_option_orders=None) -> dict:
     """Serialize StateManager state to a JSON-safe dictionary."""
     snapshot = {
         "timestamp": datetime.now().isoformat(),
         "state": state_manager.state,
         "tickers": {},
     }
+    signal_ids = set()
     for symbol, ticker in state_manager.tickers.items():
+        signal = ticker.get_signal_orders()
         snapshot["tickers"][symbol] = {
             "orders": [order.get_state() for order in ticker.orders],
-            "signal_orders": [order.get_state() for order in ticker.get_signal_orders()],
+            "signal_orders": [order.get_state() for order in signal],
         }
+        for o in signal:
+            if o.order_id:
+                signal_ids.add(o.order_id)
     if order_book is not None:
+        idx = 1
+        for o in order_book:
+            if o.get('order_id') in signal_ids:
+                o['source'] = 'engine'
+                o['machine_index'] = idx
+                idx += 1
+            else:
+                o['source'] = 'external'
+                o['machine_index'] = None
         snapshot["order_book"] = order_book
     if portfolio is not None:
         snapshot["portfolio"] = portfolio
@@ -51,6 +66,8 @@ def _serialize_state(state_manager, order_book=None, portfolio=None,
         snapshot["drift_metrics"] = drift_metrics
     if recent_orders:
         snapshot["recent_orders"] = recent_orders
+    if recent_option_orders:
+        snapshot["recent_option_orders"] = recent_option_orders
     return snapshot
 
 
@@ -62,12 +79,14 @@ def _serialize_value(obj):
 
 
 def _log_local(state_manager, order_book=None, portfolio=None,
-               drift_metrics=None, recent_orders=None):
+               drift_metrics=None, recent_orders=None,
+               recent_option_orders=None):
     """Write state snapshot to a local JSON file under state_logs/."""
     LOCAL_LOG_DIR.mkdir(exist_ok=True)
     snapshot = _serialize_state(state_manager, order_book=order_book,
                                 portfolio=portfolio, drift_metrics=drift_metrics,
-                                recent_orders=recent_orders)
+                                recent_orders=recent_orders,
+                                recent_option_orders=recent_option_orders)
     blob_key = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
     payload = json.dumps(snapshot, default=_serialize_value, indent=2)
 
@@ -78,7 +97,8 @@ def _log_local(state_manager, order_book=None, portfolio=None,
 
 
 def _log_remote(state_manager, order_book=None, portfolio=None,
-                drift_metrics=None, recent_orders=None):
+                drift_metrics=None, recent_orders=None,
+                recent_option_orders=None):
     """Upload state snapshot to Netlify Blobs."""
     config = _get_config()
     if not config:
@@ -88,7 +108,8 @@ def _log_remote(state_manager, order_book=None, portfolio=None,
 
     snapshot = _serialize_state(state_manager, order_book=order_book,
                                 portfolio=portfolio, drift_metrics=drift_metrics,
-                                recent_orders=recent_orders)
+                                recent_orders=recent_orders,
+                                recent_option_orders=recent_option_orders)
     blob_key = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
     payload = json.dumps(snapshot, default=_serialize_value)
 
@@ -98,26 +119,42 @@ def _log_remote(state_manager, order_book=None, portfolio=None,
         "Content-Type": "application/json",
     }
 
+    # Debug: print what we're sending
+    print(f"\n  [blob] PUT {STORE_NAME}/{blob_key}")
+    print(f"  [blob] Payload keys: {list(snapshot.keys())}")
+    print(f"  [blob] Payload size: {len(payload)} bytes")
+    print(f"  [blob] Tickers: {list(snapshot.get('tickers', {}).keys())}")
+    print(f"  [blob] Order book entries: {len(snapshot.get('order_book', []))}")
+    print(f"  [blob] Recent orders: {len(snapshot.get('recent_orders', []))}")
+    if snapshot.get('drift_metrics'):
+        print(f"  [blob] Drift metrics symbols: {list(snapshot['drift_metrics'].keys())}")
+
     try:
         resp = requests.put(url, headers=headers, data=payload, timeout=10)
+        print(f"  [blob] Response: {resp.status_code} {resp.reason}")
+        if resp.text:
+            print(f"  [blob] Response body: {resp.text[:500]}")
         resp.raise_for_status()
-        print(f"State logged to Netlify Blobs: {STORE_NAME}/{blob_key}")
+        print(f"  [blob] State logged to Netlify Blobs: {STORE_NAME}/{blob_key}")
         return blob_key
     except requests.RequestException as e:
-        print(f"Failed to log state to Netlify Blobs: {e}")
+        print(f"  [blob] FAILED: {e}")
         return None
 
 
 def log_state_to_blob(state_manager, live=False, order_book=None,
-                      portfolio=None, drift_metrics=None, recent_orders=None):
+                      portfolio=None, drift_metrics=None, recent_orders=None,
+                      recent_option_orders=None):
     """Log StateManager state. Writes locally in dry-run, uploads to Netlify Blobs when live."""
     if live:
         return _log_remote(state_manager, order_book=order_book,
                            portfolio=portfolio, drift_metrics=drift_metrics,
-                           recent_orders=recent_orders)
+                           recent_orders=recent_orders,
+                           recent_option_orders=recent_option_orders)
     return _log_local(state_manager, order_book=order_book,
                       portfolio=portfolio, drift_metrics=drift_metrics,
-                      recent_orders=recent_orders)
+                      recent_orders=recent_orders,
+                      recent_option_orders=recent_option_orders)
 
 
 def upload_blob(store_name, blob_key, data):
@@ -136,11 +173,18 @@ def upload_blob(store_name, blob_key, data):
         "Content-Type": "application/json",
     }
 
+    # Debug: print what we're sending
+    print(f"\n  [blob] PUT {store_name}/{blob_key}")
+    print(f"  [blob] Payload size: {len(payload)} bytes")
+
     try:
         resp = requests.put(url, headers=headers, data=payload, timeout=15)
+        print(f"  [blob] Response: {resp.status_code} {resp.reason}")
+        if resp.text:
+            print(f"  [blob] Response body: {resp.text[:500]}")
         resp.raise_for_status()
-        print(f"  Blob uploaded: {store_name}/{blob_key}")
+        print(f"  [blob] Uploaded: {store_name}/{blob_key}")
         return blob_key
     except requests.RequestException as e:
-        print(f"  Failed to upload blob {store_name}/{blob_key}: {e}")
+        print(f"  [blob] FAILED {store_name}/{blob_key}: {e}")
         return None
