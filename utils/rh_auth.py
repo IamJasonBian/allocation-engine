@@ -10,6 +10,8 @@ from typing import Optional, Dict
 import robin_stocks.robinhood as r
 from dotenv import load_dotenv
 
+from trading_system.utils.slack import send_slack_alert
+
 
 class RobinhoodAuth:
     """Manages authentication for multiple Robinhood accounts"""
@@ -76,6 +78,10 @@ class RobinhoodAuth:
                 print("Logging in with credentials...")
 
         # Fresh login with credentials
+        send_slack_alert(
+            f":key: Robinhood fresh login requested for '{account}' account ({creds['email']})",
+            emoji=":key:",
+        )
         try:
             login_response = r.login(
                 creds['email'],

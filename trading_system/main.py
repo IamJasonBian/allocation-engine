@@ -21,7 +21,6 @@ from trading_system.strategies.breakout_strategy import BreakoutStrategy  # noqa
 from trading_system.strategies.momentum_dca_strategy import MomentumDcaLongStrategy  # noqa: E402
 from trading_system.state.state_manager import StateManager  # noqa: E402
 from trading_system.state.blob_logger import log_state_to_blob  # noqa: E402
-from trading_system.state.redis_store import sync_to_redis  # noqa: E402
 from trading_system.market_indicators import fetch_and_write_indicators  # noqa: E402
 from trading_system.utils.slack import send_slack_alert  # noqa: E402
 from trading_system.entities.OrderType import OrderSide  # noqa: E402
@@ -677,9 +676,6 @@ class TradingSystem:
             recent_option_orders=recent_option_orders,
         )
 
-        # Sync portfolio data to Redis
-        sync_to_redis(portfolio_data, recent_orders=recent_orders, recent_option_orders=recent_option_orders, live=not self.dry_run)
-
         # Refresh dashboard market indicators
         if self.dashboard:
             try:
@@ -1157,6 +1153,13 @@ def main():
         verbose=args.verbose,
         dashboard=args.dashboard,
         recent_days=args.recent,
+    )
+
+    # Notify Slack on deployment startup
+    mode = "LIVE" if args.live else "DRY RUN"
+    send_slack_alert(
+        f":rocket: Engine deployed — mode={mode}, strategy={args.strategy}, symbols={', '.join(symbols)}",
+        emoji=":rocket:",
     )
 
     # Run backtest if requested (standalone mode — exit after)
