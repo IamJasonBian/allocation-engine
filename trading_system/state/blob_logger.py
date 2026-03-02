@@ -15,7 +15,7 @@ import requests
 
 
 NETLIFY_BLOBS_URL = "https://api.netlify.com/api/v1/blobs"
-STORE_NAME = "order-book"
+STORE_NAME = "state-logs"  # Using state-logs while UI manages cut-overs
 LOCAL_LOG_DIR = Path(__file__).resolve().parent.parent.parent / "state_logs"
 
 
