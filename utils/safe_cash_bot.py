@@ -1705,6 +1705,20 @@ class SafeCashBot:
             print(f"{'='*70}\n")
             return None
 
+    def cancel_order(self, order_id, dry_run=True):
+        """Cancel an open order by its Robinhood order ID."""
+        if dry_run:
+            print(f"   [DRY RUN] Would cancel order {order_id}")
+            return True
+
+        try:
+            r.orders.cancel_stock_order(order_id)
+            print(f"   Cancelled order {order_id}")
+            return True
+        except Exception as e:
+            print(f"   Cancel failed for {order_id}: {e}")
+            return False
+
     def get_quote(self, symbol):
         """Get real-time quote"""
         try:

@@ -150,7 +150,7 @@ class StateManager:
         ORDER_TYPE_MAP = {
             'Limit': OrderType.LIMIT,
             'Market': OrderType.MARKET,
-            'Stop Loss': OrderType.STOP,
+            'Stop Loss': OrderType.STOP_LIMIT,
             'Stop Limit': OrderType.STOP_LIMIT,
         }
         SIDE_MAP = {
@@ -169,7 +169,19 @@ class StateManager:
             size = float(raw.get('quantity', 0))
             side = SIDE_MAP.get(raw.get('side'))
             order_id = raw.get('order_id')
-            created_at = raw.get('created_at')
+
+            # Parse created_at from string if present
+            created_at = None
+            created_at_str = raw.get('created_at')
+            if created_at_str and created_at_str != 'N/A':
+                if isinstance(created_at_str, str):
+                    try:
+                        created_at = datetime.strptime(created_at_str, '%Y-%m-%d %H:%M:%S')
+                    except ValueError:
+                        pass
+                else:
+                    created_at = created_at_str
+
             orders.append(Order(size=size, price=price, order_type=order_type,
                                 side=side, order_id=order_id, created_at=created_at))
 

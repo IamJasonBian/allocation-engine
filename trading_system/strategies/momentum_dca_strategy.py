@@ -13,6 +13,7 @@ Parameters optimized via grid search (see backtests/parameter_optimizer.py):
 Uses Ticker/Order entities for order tracking (no raw dicts).
 """
 
+from datetime import datetime, timedelta
 from typing import Dict, Optional, List
 
 from trading_system.config import DEFAULT_LOT_SIZE
@@ -32,11 +33,12 @@ class MomentumDcaLongStrategy(BaseStrategy):
     # BTC is Grayscale Bitcoin Mini Trust ETF, no remapping needed
     DEFAULT_HEDGE_MAP = {}
 
-    def __init__(self, symbols: List[str], coverage_threshold: float = 0.10,
-                 stop_offset_pct: float = 0.0125, proximity_pct: float = 0.0075,
-                 coverage_range_pct: float = 0.04,
-                 buy_offset: float = 0.50,
-                 lot_size: int = DEFAULT_LOT_SIZE,
+    def __init__(self, symbols: List[str], coverage_threshold: float = 0.20,
+                 stop_offset_pct: float = 0.015, proximity_pct: float = 0.0075,
+                 coverage_range_pct: float = 0.08,
+                 buy_offset: float = 0.20,
+                 lot_size: int = 150,
+                 stale_order_age_hours: int = 24,
                  hedge_symbol_map: Dict = None):
         self.symbols = symbols
         self.coverage_threshold = coverage_threshold
@@ -45,6 +47,7 @@ class MomentumDcaLongStrategy(BaseStrategy):
         self.coverage_range_pct = coverage_range_pct
         self.buy_offset = buy_offset
         self.lot_size = lot_size
+        self.stale_order_age_hours = stale_order_age_hours
         self.hedge_symbol_map = hedge_symbol_map if hedge_symbol_map is not None else self.DEFAULT_HEDGE_MAP
 
     def analyze_symbol(self, symbol: str, metrics: Dict,
@@ -90,6 +93,39 @@ class MomentumDcaLongStrategy(BaseStrategy):
 
         covered_qty = sum(o.size for o in in_range)
         coverage_pct = (covered_qty / position_qty) * 100 if position_qty > 0 else 0
+
+        # Check for stale orders before evaluating coverage
+        stale = self._find_stale_order(current_price, in_range)
+        if stale:
+            order_symbol = self.hedge_symbol_map.get(symbol, symbol)
+            stop_price = round(current_price * (1 - self.stop_offset_pct), 2)
+            buy_price = round(stop_price - self.buy_offset, 2)
+            age_days = (datetime.now() - stale.created_at).days
+            return {
+                'signal': 'STALE_REFRESH',
+                'reason': (f'{symbol}: Stale order — '
+                           f'{int(stale.size)} shares @ ${stale.price:.2f} '
+                           f'is {age_days}d old and price has risen to '
+                           f'${current_price:.2f}. Replacing with stop-limit '
+                           f'on {order_symbol} @ ${stop_price:.2f}'),
+                'cancel_order_id': stale.order_id,
+                'cancel_order': stale,
+                'order': {
+                    'action': 'stop_limit_sell',
+                    'symbol': order_symbol,
+                    'quantity': int(stale.size),
+                    'stop_price': stop_price,
+                    'limit_price': stop_price,
+                    'current_price': current_price,
+                },
+                'paired_buy': {
+                    'action': 'limit_buy',
+                    'symbol': order_symbol,
+                    'quantity': int(stale.size),
+                    'price': buy_price,
+                    'current_price': current_price,
+                }
+            }
 
         if coverage_pct >= self.coverage_threshold * 100:
             return {
@@ -173,6 +209,21 @@ class MomentumDcaLongStrategy(BaseStrategy):
             'gap_qty': gap_qty,
         }
 
+    def _find_stale_order(self, current_price, valid_orders):
+        """Find first order older than threshold where price has risen past it."""
+        now = datetime.now()
+        age_threshold = timedelta(hours=self.stale_order_age_hours)
+        ideal_stop = round(current_price * (1 - self.stop_offset_pct), 2)
+
+        for order in valid_orders:
+            if not order.created_at or not order.price:
+                continue
+            if (now - order.created_at) < age_threshold:
+                continue
+            if order.price < ideal_stop:
+                return order
+        return None
+
     def _find_nearest_order(self, current_price, signal_orders):
         """Find the Order entity whose price is closest to current price"""
         best = None
@@ -230,6 +281,14 @@ class MomentumDcaLongStrategy(BaseStrategy):
                     pct_away = abs(current_price - o.price) / current_price * 100
                     lines.append(f"    {i}. {o.size:,.4f} units @ ${o.price:,.2f} "
                                  f"({o.order_type.value}) [{pct_away:+.1f}%]")
+        if signal_data['signal'] == 'STALE_REFRESH' and signal_data.get('cancel_order'):
+            cancel = signal_data['cancel_order']
+            lines.append("")
+            lines.append("Stale Order Being Cancelled:")
+            lines.append(f"  Order ID: {cancel.order_id}")
+            lines.append(f"  Size: {int(cancel.size)} shares @ ${cancel.price:,.2f}")
+            age_days = (datetime.now() - cancel.created_at).days if cancel.created_at else '?'
+            lines.append(f"  Age: {age_days} day(s)")
         if signal_data.get('position_qty') and signal_data['signal'] == 'COVER_GAP':
             lines.append("")
             lines.append("Coverage Sizing:")
