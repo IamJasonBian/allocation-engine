@@ -6,7 +6,7 @@ def make_orders():
     return [
         Order(100, 50.0, OrderType.MARKET),
         Order(200, 75.0, OrderType.LIMIT),
-        Order(150, 60.0, OrderType.STOP),
+        Order(150, 60.0, OrderType.STOP_LIMIT),
     ]
 
 class TestGetOpenOrders:

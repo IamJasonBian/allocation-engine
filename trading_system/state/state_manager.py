@@ -178,7 +178,7 @@ class StateManager:
         ORDER_TYPE_MAP = {
             'Limit': OrderType.LIMIT,
             'Market': OrderType.MARKET,
-            'Stop Loss': OrderType.STOP,
+            'Stop Loss': OrderType.STOP_LIMIT,
             'Stop Limit': OrderType.STOP_LIMIT,
         }
 

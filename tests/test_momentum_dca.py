@@ -68,7 +68,7 @@ class TestCoverageCalculation:
         position = _make_position('SPY', 100, 450.0)
         ticker = _make_ticker([
             _sell_order(5, 460.0, OrderType.LIMIT),
-            _sell_order(5, 440.0, OrderType.STOP),
+            _sell_order(5, 440.0, OrderType.STOP_LIMIT),
             _sell_order(5, 438.0, OrderType.STOP_LIMIT),
             _sell_order(5, 435.0, OrderType.LIMIT),
         ])
@@ -198,7 +198,7 @@ class TestPriceProximity:
     def test_proximity_with_stop_order(self):
         strategy = _make_strategy()
         position = _make_position('SPY', 100, 450.0)
-        ticker = _make_ticker([_sell_order(10, 449.0, OrderType.STOP)])
+        ticker = _make_ticker([_sell_order(10, 449.0, OrderType.STOP_LIMIT)])
         signal = strategy.analyze_symbol('SPY', {'current_price': 450.0}, position, ticker)
         assert signal['signal'] == 'RESUBMIT'
 
@@ -395,7 +395,7 @@ class TestLoadBrokerSellOrders:
         assert len(ticker.orders) == 3
         assert ticker.orders[0].order_type == OrderType.LIMIT
         assert ticker.orders[1].order_type == OrderType.STOP_LIMIT
-        assert ticker.orders[2].order_type == OrderType.STOP
+        assert ticker.orders[2].order_type == OrderType.STOP_LIMIT
 
     def test_uses_limit_price_over_stop_price(self):
         mgr = StateManager()
