@@ -1,4 +1,10 @@
+# allocation-engine
+
+![Dashboard](dashboard/captures/dashboard.gif)
+
 ## Summary
+
+Version - 0.1.0 - This is hobbyist client side agentic trading package (builds with the [allocation-manager](https://github.com/OptimChain/allocation-manager/) service).
 
 1. **Install dependencies**:
 ```bash

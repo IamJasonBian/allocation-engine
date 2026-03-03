@@ -50,6 +50,7 @@ env/
 # Logs
 *.log
 logs/
+state_logs/
 
 # Trading data (optional - uncomment if you don't want to track)
 # trades/
@@ -61,6 +62,9 @@ trading_state.json
 
 # Account configuration
 accounts_config.json
+
+# Dashboard generated data
+dashboard/market_data.json
 
 # Jupyter Notebook
 .ipynb_checkpoints
@@ -74,3 +78,11 @@ htmlcov/
 .mypy_cache/
 .dmypy.json
 dmypy.json
+
+# Backtest cached data and generated charts
+trading_system/backtests/data/
+docs/charts/
+
+# Node.js (Netlify Functions)
+node_modules/
+.netlify/

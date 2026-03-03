@@ -1,0 +1,797 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Market Indicators</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+      background: #000; color: #ccc; padding: 4px 8px;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Header */
+    .hdr { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; border-bottom: 1px solid #222; padding-bottom: 3px; }
+    .hdr h1 { font-size: 14px; font-weight: 500; color: #fff; letter-spacing: 0.5px; }
+    .hdr .st { font-size: 10px; color: #555; }
+    .hdr .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+    .hdr .dot.ok { background: #4a4; } .hdr .dot.warn { background: #aa4; }
+
+    /* Range selector */
+    .range { display: flex; gap: 2px; margin-bottom: 4px; }
+    .range button {
+      background: transparent; border: 1px solid #333; padding: 2px 8px;
+      color: #666; font-size: 10px; font-family: inherit; cursor: pointer;
+    }
+    .range button:first-child { border-radius: 3px 0 0 3px; }
+    .range button:last-child { border-radius: 0 3px 3px 0; }
+    .range button.on { background: #fff; color: #000; border-color: #fff; }
+
+    /* Focus prices (BTC + QQQ) */
+    .focus { display: flex; gap: 12px; margin-bottom: 4px; flex-wrap: wrap; }
+    .focus-card { min-width: 180px; }
+    .focus-card .name { font-size: 10px; color: #666; text-transform: uppercase; letter-spacing: 0.5px; }
+    .focus-card .price { font-size: 18px; font-weight: 700; color: #fff; margin: 0; }
+    .focus-card .meta { font-size: 11px; }
+    .focus-card .meta span { margin-right: 10px; }
+    .up { color: #4a4; } .dn { color: #a44; } .flat { color: #666; }
+
+    /* Instrument table */
+    table { width: 100%; border-collapse: collapse; margin-bottom: 4px; font-size: 11px; }
+    th { text-align: left; color: #555; font-weight: 500; padding: 2px 5px; border-bottom: 1px solid #222; text-transform: uppercase; font-size: 9px; letter-spacing: 0.3px; }
+    td { padding: 2px 5px; border-bottom: 1px solid #111; }
+    td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    tr:hover { background: #0a0a0a; }
+
+    /* Correlation matrix */
+    .corr-wrap { margin-bottom: 4px; }
+    .corr-wrap h2 { font-size: 10px; font-weight: 500; color: #555; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px; }
+    .corr { display: inline-block; }
+    .corr table { width: auto; }
+    .corr th, .corr td { text-align: center; padding: 2px 6px; font-size: 10px; min-width: 44px; }
+    .corr td.lbl { text-align: left; color: #888; font-weight: 500; }
+
+    /* Sections */
+    .section { margin-bottom: 4px; }
+    .section h2 { font-size: 10px; font-weight: 500; color: #555; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px; }
+
+    /* Chart grid */
+    .cgrid { display: grid; gap: 4px; margin-bottom: 4px; }
+    .cgrid.c2 { grid-template-columns: 1fr 1fr; }
+    .cgrid.c3 { grid-template-columns: 1fr 1fr 1fr; }
+    @media (max-width: 1000px) { .cgrid.c2, .cgrid.c3 { grid-template-columns: 1fr; } }
+    .cbox { border: 1px solid #1a1a1a; padding: 4px 6px; }
+    .cbox h3 { font-size: 9px; font-weight: 500; color: #555; text-transform: uppercase; letter-spacing: 0.3px; margin-bottom: 2px; }
+
+    /* Stat cards row */
+    .stats { display: flex; gap: 4px; margin-bottom: 4px; flex-wrap: wrap; }
+    .stat { border: 1px solid #1a1a1a; padding: 3px 8px; min-width: 100px; }
+    .stat .lbl { font-size: 9px; color: #555; text-transform: uppercase; letter-spacing: 0.3px; }
+    .stat .val { font-size: 14px; font-weight: 700; color: #fff; margin-top: 0; }
+    .stat .sub { font-size: 9px; color: #555; margin-top: 0; }
+
+    /* Book panel (shared for order book + options) */
+    .book-panel { overflow-y: auto; max-height: 360px; }
+    .book-section-title { font-size: 9px; font-weight: 500; color: #555; text-transform: uppercase; letter-spacing: 0.3px; margin: 3px 0 2px; border-bottom: 1px solid #1a1a1a; padding-bottom: 2px; }
+    .book-section-title:first-child { margin-top: 0; }
+
+    /* Order book rows */
+    .ob-row { display: flex; justify-content: space-between; align-items: baseline; padding: 3px 0; border-bottom: 1px solid #0d0d0d; font-size: 10px; }
+    .ob-row .ob-sym { color: #fff; font-weight: 500; min-width: 50px; }
+    .ob-row .ob-type { color: #555; font-size: 9px; }
+    .ob-row .ob-qty { color: #888; }
+    .ob-row .ob-price { color: #ccc; font-variant-numeric: tabular-nums; }
+    .ob-row.buy .ob-side { color: #4a4; }
+    .ob-row.sell .ob-side { color: #a44; }
+    .ob-row .ob-idx { font-size: 8px; color: #000; background: #5a5; border-radius: 2px; padding: 0 4px; font-weight: 600; min-width: 14px; text-align: center; }
+    .ob-empty { color: #333; font-size: 10px; padding: 12px 0; text-align: center; }
+
+    /* Options cards */
+    .opt-card { border: 1px solid #1a1a1a; padding: 4px 6px; margin-bottom: 4px; }
+    .opt-card .opt-hdr { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; }
+    .opt-card .opt-title { font-size: 11px; font-weight: 600; color: #fff; }
+    .opt-card .opt-badge { font-size: 9px; padding: 1px 5px; border-radius: 2px; font-weight: 500; }
+    .opt-card .opt-badge.hold { background: #1a331a; color: #4a4; }
+    .opt-card .opt-badge.close { background: #331a1a; color: #a44; }
+    .opt-card .opt-row { display: flex; gap: 10px; flex-wrap: wrap; font-size: 10px; margin-bottom: 2px; }
+    .opt-card .opt-row .k { color: #555; }
+    .opt-card .opt-row .v { color: #ccc; }
+    .opt-greeks { display: flex; gap: 8px; font-size: 10px; margin: 3px 0; }
+    .opt-greeks span { color: #888; }
+    .opt-greeks .gv { color: #fff; font-weight: 500; }
+    .opt-pl-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px; margin: 3px 0; font-size: 9px; text-align: center; }
+    .opt-pl-grid .pl-lbl { color: #555; }
+    .opt-pl-grid .pl-val { font-weight: 500; }
+    .opt-reasons { font-size: 9px; color: #666; margin-top: 3px; }
+    .opt-reasons span { margin-right: 6px; }
+    .opt-empty { color: #333; font-size: 10px; padding: 12px 0; text-align: center; }
+
+    /* Drift alert banner */
+    .drift-alert { display: none; padding: 4px 10px; margin-bottom: 4px; border: 1px solid; font-size: 11px; align-items: center; gap: 8px; }
+    .drift-alert.red { border-color: #a44; background: rgba(170,68,68,0.12); color: #f66; }
+    .drift-alert.amber { border-color: #aa8833; background: rgba(170,136,51,0.10); color: #da3; }
+    .drift-alert.visible { display: flex; }
+    .drift-alert .pulse { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; animation: pulse 1.5s ease-in-out infinite; }
+    .drift-alert.red .pulse { background: #f44; }
+    .drift-alert.amber .pulse { background: #da3; }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+    .drift-alert .alert-text { flex: 1; }
+
+    /* Drift panel */
+    .drift-panel { display: none; margin-bottom: 4px; }
+    .drift-panel.visible { display: block; }
+    .drift-panel h2 { font-size: 10px; font-weight: 500; color: #555; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px; }
+    .drift-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+    @media (max-width: 700px) { .drift-grid { grid-template-columns: 1fr; } }
+    .drift-card { border: 1px solid #1a1a1a; padding: 6px 10px; }
+    .drift-card .card-title { font-size: 9px; color: #555; text-transform: uppercase; letter-spacing: 0.3px; margin-bottom: 4px; }
+
+    /* Regime badge */
+    .regime-badge { display: inline-block; font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 2px; letter-spacing: 0.3px; }
+    .regime-badge.high { background: #331a1a; color: #f66; }
+    .regime-badge.medium { background: #332d1a; color: #da3; }
+    .regime-badge.low { background: #1a331a; color: #4a4; }
+
+    /* Regime detail rows */
+    .regime-rows { margin-top: 4px; font-size: 10px; }
+    .regime-rows .rr { display: flex; justify-content: space-between; padding: 2px 0; border-bottom: 1px solid #111; }
+    .regime-rows .rr .k { color: #555; }
+    .regime-rows .rr .v { color: #ccc; }
+
+    /* Params comparison table */
+    .params-table { width: 100%; border-collapse: collapse; font-size: 10px; }
+    .params-table th { text-align: left; color: #555; font-weight: 500; padding: 2px 5px; border-bottom: 1px solid #222; text-transform: uppercase; font-size: 9px; letter-spacing: 0.3px; }
+    .params-table td { padding: 3px 5px; border-bottom: 1px solid #111; }
+    .params-table .match { color: #4a4; }
+    .params-table .mismatch { color: #f66; font-weight: 500; }
+
+    /* Drift stat card warning */
+    .stat.warn-card { border-color: #a44; }
+    .stat.warn-card .val { color: #f66; }
+  </style>
+</head>
+<body>
+  <div class="hdr">
+    <h1>MARKET INDICATORS</h1>
+    <div class="st"><span class="dot" id="dot"></span><span id="stxt">loading</span></div>
+  </div>
+
+  <div class="drift-alert" id="driftAlert"><span class="pulse"></span><span class="alert-text"></span></div>
+
+  <div class="range" id="rangeBar">
+    <button data-key="1d" class="on">1D</button>
+    <button data-key="1w">1W</button>
+    <button data-key="2w">2W</button>
+    <button data-key="3w">3W</button>
+    <button data-key="4w">4W</button>
+    <button data-key="5w">5W</button>
+    <button data-key="6w">6W</button>
+    <button data-key="7w">7W</button>
+  </div>
+
+  <div class="focus" id="focusRow"></div>
+  <div id="instTable"></div>
+  <div class="corr-wrap" id="corrWrap"></div>
+
+  <div class="section">
+    <h2>Price Movement (Normalised %)</h2>
+    <div class="cgrid c2">
+      <div class="cbox"><h3>BTC/USD vs Indexes (Normalised %)</h3><canvas id="chartMove"></canvas></div>
+      <div class="cbox"><h3>Order Book</h3><div id="bookPanel" class="book-panel"></div></div>
+    </div>
+  </div>
+
+  <div class="stats" id="statRow"></div>
+
+  <div class="drift-panel" id="driftPanel"></div>
+
+  <div class="section">
+    <h2>BTC Indicators</h2>
+    <div class="cgrid c3">
+      <div class="cbox"><h3 id="ivTitle">IV Z-Score</h3><canvas id="ivChart"></canvas></div>
+      <div class="cbox"><h3>ETF Flows (Cumulative)</h3><canvas id="flowChart"></canvas></div>
+      <div class="cbox"><h3>Historical Volatility (30d Rolling)</h3><canvas id="volChart"></canvas></div>
+    </div>
+  </div>
+
+<script>
+/* ── state ── */
+let D = null; // current data
+let R = '1d'; // selected range key
+const charts = {};
+
+/* ── range config ── */
+const RANGE_CFG = {
+  '1d': { hours: 24, useHourly: true,  label: '1 Day' },
+  '1w': { days: 7,   useHourly: true,  label: '1 Week' },
+  '2w': { days: 14,  useHourly: false, label: '2 Weeks' },
+  '3w': { days: 21,  useHourly: false, label: '3 Weeks' },
+  '4w': { days: 28,  useHourly: false, label: '4 Weeks' },
+  '5w': { days: 35,  useHourly: false, label: '5 Weeks' },
+  '6w': { days: 42,  useHourly: false, label: '6 Weeks' },
+  '7w': { days: 49,  useHourly: false, label: '7 Weeks' },
+};
+
+/* Map range key to correlation window (trading days) */
+const CORR_WINDOW = { '1d':'5','1w':'5','2w':'10','3w':'15','4w':'20','5w':'25','6w':'30','7w':'35' };
+
+/* Chart colours - muted academic palette */
+const COLORS = {
+  'BTC':     '#fff',
+  'BTC/USD': '#999',
+  'QQQ':     '#6cf',
+  'SPY':     '#c9f',
+  'GLD':     '#fc6',
+  'DIA':     '#f96',
+  'IWM':     '#6f9',
+  'EFA':     '#f69',
+};
+
+/* ── helpers ── */
+function dir(v) { return v > 0.005 ? 'up' : v < -0.005 ? 'dn' : 'flat'; }
+function s(v) { return v >= 0 ? '+' + v.toFixed(2) : v.toFixed(2); }
+function p$(v) { return v >= 1000 ? '$' + v.toLocaleString(undefined,{maximumFractionDigits:2}) : '$' + v.toFixed(2); }
+function fmtDollar(n) {
+  if (Math.abs(n) >= 1e9) return '$' + (n/1e9).toFixed(1) + 'B';
+  if (Math.abs(n) >= 1e6) return '$' + (n/1e6).toFixed(1) + 'M';
+  if (Math.abs(n) >= 1e3) return '$' + (n/1e3).toFixed(0) + 'K';
+  return '$' + n.toFixed(0);
+}
+
+function filterSeries(series, rangeKey) {
+  if (!series || !series.length) return [];
+  const cfg = RANGE_CFG[rangeKey];
+  let cutoff;
+  if (cfg.hours) {
+    cutoff = Date.now() - cfg.hours * 3600000;
+  } else {
+    // Align to start of today (midnight local) so daily candles at midnight
+    // aren't excluded by the time-of-day component of Date.now()
+    const now = new Date();
+    const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    cutoff = midnight - cfg.days * 86400000;
+  }
+  return series.filter(d => (d.t || d.timestamp) >= cutoff);
+}
+
+function corrColor(v) {
+  if (v == null) return '#222';
+  const abs = Math.abs(v);
+  if (v > 0) return `rgba(68,170,68,${abs * 0.8})`;
+  return `rgba(170,68,68,${abs * 0.8})`;
+}
+
+/* ── chart defaults ── */
+function mkOpts(yFmt) {
+  return {
+    responsive: true, maintainAspectRatio: true,
+    animation: { duration: 200 },
+    plugins: {
+      legend: { display: true, position: 'bottom', labels: { color: '#bbb', font: { size: 10, family: 'inherit' }, boxWidth: 10, padding: 8 } },
+      tooltip: { backgroundColor: '#1a1a1a', borderColor: '#555', borderWidth: 1, titleColor: '#ddd', bodyColor: '#fff', padding: 8, titleFont: { size: 11 }, bodyFont: { size: 12 } },
+      zoom: {
+        pan: { enabled: true, mode: 'x', modifierKey: null },
+        zoom: {
+          wheel: { enabled: true, speed: 0.05 },
+          pinch: { enabled: true },
+          mode: 'x',
+          onZoomComplete: function({chart}) { chart.update('none'); },
+        },
+      },
+    },
+    scales: {
+      x: { type: 'time', grid: { color: '#2a2a2a' }, ticks: { color: '#aaa', font: { size: 10 }, maxTicksLimit: 8 }, border: { color: '#555' } },
+      y: { grid: { color: '#2a2a2a' }, ticks: { color: '#aaa', font: { size: 10 }, callback: yFmt || (v => v) }, border: { color: '#555' } },
+    },
+  };
+}
+
+function mkLine(label, data, color, dashed) {
+  return {
+    label, data,
+    borderColor: color, borderWidth: 1.5,
+    borderDash: dashed ? [4,4] : [],
+    pointRadius: 2, pointHoverRadius: 5,
+    pointBackgroundColor: color,
+    tension: 0.15, fill: false,
+  };
+}
+
+function destroyChart(key) { if (charts[key]) { charts[key].destroy(); delete charts[key]; } }
+
+/* ── render focus prices ── */
+function renderFocus() {
+  const el = document.getElementById('focusRow');
+  const cards = [];
+  for (const sym of ['BTC', 'BTC/USD', 'QQQ']) {
+    const q = D.quotes[sym];
+    if (!q) continue;
+    const name = (D.instrument_names || {})[sym] || sym;
+    const d = dir(q.change_pct / 100);
+    cards.push(`<div class="focus-card">
+      <div class="name">${name} &mdash; ${sym}</div>
+      <div class="price">${p$(q.price)}</div>
+      <div class="meta">
+        <span class="${d}">${s(q.change_pct)}%</span>
+        <span>O ${p$(q.open)}</span>
+        <span>H ${p$(q.high)}</span>
+        <span>L ${p$(q.low)}</span>
+        <span style="color:#444">Vol ${q.volume ? (q.volume/1e6).toFixed(1)+'M' : '-'}</span>
+      </div>
+    </div>`);
+  }
+  el.innerHTML = cards.join('');
+}
+
+/* ── render instrument table ── */
+function renderTable() {
+  const el = document.getElementById('instTable');
+  const syms = ['BTC','BTC/USD','QQQ','SPY','GLD','DIA','IWM','EFA'];
+  let html = '<table><thead><tr><th>Instrument</th><th>Symbol</th><th style="text-align:right">Price</th><th style="text-align:right">Chg</th><th style="text-align:right">Chg %</th><th style="text-align:right">Open</th><th style="text-align:right">High</th><th style="text-align:right">Low</th><th style="text-align:right">Volume</th></tr></thead><tbody>';
+  for (const sym of syms) {
+    const q = D.quotes[sym];
+    if (!q) continue;
+    const name = (D.instrument_names || {})[sym] || sym;
+    const d = dir(q.change_pct / 100);
+    const vol = q.volume ? (q.volume >= 1e6 ? (q.volume/1e6).toFixed(1)+'M' : Math.round(q.volume).toLocaleString()) : '-';
+    html += `<tr>
+      <td>${name}</td><td style="color:#888">${sym}</td>
+      <td class="num" style="color:#fff">${p$(q.price)}</td>
+      <td class="num ${d}">${s(q.change)}</td>
+      <td class="num ${d}">${s(q.change_pct)}%</td>
+      <td class="num">${p$(q.open)}</td>
+      <td class="num">${p$(q.high)}</td>
+      <td class="num">${p$(q.low)}</td>
+      <td class="num" style="color:#555">${vol}</td>
+    </tr>`;
+  }
+  html += '</tbody></table>';
+  el.innerHTML = html;
+}
+
+/* ── render correlation matrix ── */
+function renderCorr() {
+  const wrap = document.getElementById('corrWrap');
+  const wKey = CORR_WINDOW[R] || '5';
+  const cData = (D.correlations || {})[wKey] || {};
+  const ref = ['QQQ','SPY','GLD','DIA','IWM','EFA'];
+  const focus = ['BTC','BTC/USD'];
+
+  let html = `<h2>Correlation Matrix (${RANGE_CFG[R].label})</h2><div class="corr"><table><thead><tr><th></th>`;
+  for (const r of ref) html += `<th>${r}</th>`;
+  html += '</tr></thead><tbody>';
+  for (const f of focus) {
+    html += `<tr><td class="lbl">${f}</td>`;
+    for (const r of ref) {
+      const v = cData[f + '_' + r];
+      const bg = corrColor(v);
+      const txt = v != null ? v.toFixed(2) : '-';
+      html += `<td style="background:${bg};color:#ddd">${txt}</td>`;
+    }
+    html += '</tr>';
+  }
+  html += '</tbody></table></div>';
+  wrap.innerHTML = html;
+}
+
+/* ── render movement chart ── */
+function renderMoveChart() {
+  const cfg = RANGE_CFG[R];
+  const sourceKey = cfg.useHourly ? 'hourly' : 'daily';
+  const syms = ['BTC/USD','QQQ','SPY','GLD','DIA','IWM','EFA'];
+  const datasets = [];
+
+  // Store base prices for right-axis price labels
+  const basePrices = {};
+
+  // Pass 1: filter each series and find the common (latest) start timestamp
+  // so all instruments are normalized from the same point in time
+  const filteredMap = {};
+  let commonStart = 0;
+  for (const sym of syms) {
+    const raw = (D[sourceKey] || {})[sym];
+    if (!raw || !raw.length) continue;
+    const filtered = filterSeries(raw, R);
+    if (filtered.length < 2) continue;
+    filteredMap[sym] = filtered;
+    if (filtered[0].t > commonStart) commonStart = filtered[0].t;
+  }
+
+  // Pass 2: normalize each series from the common start
+  for (const sym of Object.keys(filteredMap)) {
+    const filtered = filteredMap[sym];
+    // Find first data point at or after the common start
+    const startIdx = filtered.findIndex(d => d.t >= commonStart);
+    if (startIdx < 0 || filtered.length - startIdx < 2) continue;
+    const base = filtered[startIdx].c;
+    basePrices[sym] = base;
+    const normed = filtered.slice(startIdx).map(d => ({
+      x: d.t, y: ((d.c - base) / base) * 100, price: d.c
+    }));
+    datasets.push(mkLine(sym, normed, COLORS[sym] || '#666'));
+  }
+
+  // Build custom options: shorter chart, dual y-axes, bigger legend
+  const opts = mkOpts(v => v.toFixed(1) + '%');
+  opts.aspectRatio = 3.75; // another 66% shorter
+  // Bigger legend labels (166%)
+  opts.plugins.legend.labels.font = { size: 15, family: 'inherit' };
+  opts.plugins.legend.labels.boxWidth = 14;
+  opts.plugins.legend.labels.padding = 12;
+  // Tooltip: show both % and actual price
+  opts.plugins.tooltip.callbacks = {
+    label: function(ctx) {
+      const sym = ctx.dataset.label;
+      const pct = ctx.parsed.y;
+      const price = ctx.raw.price;
+      let line = sym + ': ' + (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%';
+      if (price != null) line += '  ($' + price.toLocaleString(undefined,{maximumFractionDigits:2}) + ')';
+      return line;
+    }
+  };
+  destroyChart('move');
+  charts.move = new Chart(document.getElementById('chartMove'), {
+    type: 'line', data: { datasets }, options: opts,
+  });
+}
+
+function renderBook() {
+  const el = document.getElementById('bookPanel');
+  const orders = D.order_book || [];
+  const opts = D.options || [];
+  let html = '';
+
+  // ── Stock Orders ──
+  const machineCount = orders.filter(o => o.source === 'engine').length;
+  html += '<div class="book-section-title">Stock Orders (' + orders.length + (machineCount ? ' · ' + machineCount + ' engine' : '') + ')</div>';
+  if (orders.length) {
+    const buys = orders.filter(o => o.side === 'BUY');
+    const sells = orders.filter(o => o.side === 'SELL');
+    for (const o of buys) {
+      const price = o.limit_price ? '$'+o.limit_price.toFixed(2) : (o.stop_price ? 'stop $'+o.stop_price.toFixed(2) : 'MKT');
+      const idx = o.machine_index ? `<span class="ob-idx">#${o.machine_index}</span>` : '';
+      html += `<div class="ob-row buy">${idx}<span class="ob-sym">${o.symbol}</span><span class="ob-side">BUY</span><span class="ob-qty">${o.quantity.toFixed(0)}</span><span class="ob-type">${o.order_type}</span><span class="ob-price">${price}</span></div>`;
+    }
+    for (const o of sells) {
+      const price = o.limit_price ? '$'+o.limit_price.toFixed(2) : (o.stop_price ? 'stop $'+o.stop_price.toFixed(2) : 'MKT');
+      const idx = o.machine_index ? `<span class="ob-idx">#${o.machine_index}</span>` : '';
+      html += `<div class="ob-row sell">${idx}<span class="ob-sym">${o.symbol}</span><span class="ob-side">SELL</span><span class="ob-qty">${o.quantity.toFixed(0)}</span><span class="ob-type">${o.order_type}</span><span class="ob-price">${price}</span></div>`;
+    }
+  } else {
+    html += '<div class="ob-empty">No open stock orders</div>';
+  }
+
+  // ── Options ──
+  html += '<div class="book-section-title">Options (' + opts.length + ')</div>';
+  if (!opts.length) {
+    html += '<div class="opt-empty">No active options</div>';
+  }
+  for (const op of opts) {
+    const otype = (op.option_type || '').toUpperCase();
+    const dr = op.position_type === 'long' ? 'LONG' : 'SHORT';
+    const rec = op.recommended_action || {};
+    const badgeCls = rec.action === 'CLOSE' ? 'close' : 'hold';
+    const g = op.greeks || {};
+    const epl = op.expected_pl || {};
+    const btcCorr = op.btc_correlation;
+    let moneyness = '';
+    if (op.underlying_price && op.strike) {
+      if (otype === 'CALL') moneyness = op.underlying_price >= op.strike ? 'ITM' : 'OTM';
+      else if (otype === 'PUT') moneyness = op.underlying_price <= op.strike ? 'ITM' : 'OTM';
+    }
+
+    html += `<div class="opt-card">
+      <div class="opt-hdr">
+        <span class="opt-title">${op.chain_symbol} $${op.strike.toFixed(0)} ${otype} ${op.expiration}</span>
+        <span class="opt-badge ${badgeCls}">${rec.action || 'HOLD'}</span>
+      </div>
+      <div class="opt-row">
+        <span><span class="k">${dr} x</span><span class="v">${op.quantity}</span></span>
+        <span><span class="k">DTE </span><span class="v">${op.dte != null ? op.dte : 'N/A'}</span></span>
+        <span><span class="k">${moneyness}</span></span>
+        <span><span class="k">Udl </span><span class="v">${op.underlying_price ? '$'+op.underlying_price.toFixed(2) : 'N/A'}</span></span>
+      </div>
+      <div class="opt-row">
+        <span><span class="k">Mk </span><span class="v">${op.mark_price ? '$'+op.mark_price.toFixed(2) : 'N/A'}</span></span>
+        <span><span class="k">Cost </span><span class="v">$${op.avg_price.toFixed(2)}</span></span>
+        <span><span class="k">P/L </span><span class="v ${op.unrealized_pl >= 0 ? 'up' : 'dn'}">${s(op.unrealized_pl_pct)}%</span></span>
+        <span><span class="k">Val </span><span class="v">$${op.current_value.toLocaleString()}</span></span>
+      </div>
+      <div class="opt-greeks">
+        <span>\u0394 <span class="gv">${g.delta != null ? g.delta.toFixed(3) : '-'}</span></span>
+        <span>\u0393 <span class="gv">${g.gamma != null ? g.gamma.toFixed(3) : '-'}</span></span>
+        <span>\u0398 <span class="gv">${g.theta != null ? g.theta.toFixed(3) : '-'}</span></span>
+        <span>V <span class="gv">${g.vega != null ? g.vega.toFixed(3) : '-'}</span></span>
+        <span>IV <span class="gv">${g.iv != null ? (g.iv*100).toFixed(1)+'%' : '-'}</span></span>
+      </div>`;
+
+    if (epl['-5%'] != null) {
+      html += `<div class="opt-pl-grid">
+        <div><div class="pl-lbl">-5%</div><div class="pl-val ${epl['-5%']>=0?'up':'dn'}">${s(epl['-5%'])}</div></div>
+        <div><div class="pl-lbl">-1%</div><div class="pl-val ${epl['-1%']>=0?'up':'dn'}">${s(epl['-1%'])}</div></div>
+        <div><div class="pl-lbl">+1%</div><div class="pl-val ${epl['+1%']>=0?'up':'dn'}">${s(epl['+1%'])}</div></div>
+        <div><div class="pl-lbl">+5%</div><div class="pl-val ${epl['+5%']>=0?'up':'dn'}">${s(epl['+5%'])}</div></div>
+      </div>`;
+      if (epl.theta_daily != null) {
+        html += `<div class="opt-row"><span><span class="k">\u0398/day </span><span class="v ${epl.theta_daily>=0?'up':'dn'}">$${s(epl.theta_daily)}</span></span>`;
+        if (op.chance_of_profit != null) html += `<span><span class="k">PoP </span><span class="v">${(op.chance_of_profit*100).toFixed(1)}%</span></span>`;
+        if (btcCorr != null) {
+          const cl = Math.abs(btcCorr) > 0.7 ? 'Strong' : Math.abs(btcCorr) > 0.4 ? 'Moderate' : 'Weak';
+          html += `<span><span class="k">BTC </span><span class="v">${btcCorr > 0?'+':''}${btcCorr.toFixed(3)} (${cl})</span></span>`;
+        }
+        html += `</div>`;
+      }
+    }
+    if (rec.reasons && rec.reasons.length) {
+      html += `<div class="opt-reasons">${rec.reasons.map(r => '<span>'+r+'</span>').join('')}</div>`;
+    }
+    html += `</div>`;
+  }
+  el.innerHTML = html;
+}
+
+/* ── render stat cards ── */
+function renderStats() {
+  const el = document.getElementById('statRow');
+  const cards = [];
+  const useHourly = RANGE_CFG[R].useHourly;
+
+  // IV z-score: pick hourly or daily source
+  const ivSrc = (useHourly && D.hourly_iv && D.hourly_iv.current != null) ? D.hourly_iv : D.iv;
+  if (ivSrc && ivSrc.current != null) {
+    const cls = ivSrc.zscore > 1 ? 'up' : ivSrc.zscore < -1 ? 'dn' : 'flat';
+    cards.push(`<div class="stat"><div class="lbl">IV Z-Score</div><div class="val ${cls}">${ivSrc.zscore.toFixed(2)}</div><div class="sub">${ivSrc.source || ''} ${ivSrc.current.toFixed(1)}%</div></div>`);
+  }
+
+  // Vol windows: hourly (4h/24h/1w) for short ranges, daily (30d/60d/...) for long
+  const volSrc = (useHourly && D.hourly_vol) ? D.hourly_vol : D.vol;
+  if (volSrc && volSrc.windows) {
+    for (const w of volSrc.windows) {
+      const cls = w.regime === 'high' || w.regime === 'extreme' ? 'dn' : w.regime === 'low' ? 'up' : 'flat';
+      cards.push(`<div class="stat"><div class="lbl">Vol ${w.label}</div><div class="val ${cls}">${w.vol.toFixed(1)}%</div><div class="sub">${w.regime}</div></div>`);
+    }
+  }
+
+  if (D.flows) {
+    cards.push(`<div class="stat"><div class="lbl">ETF Flow 30d</div><div class="val">${fmtDollar(D.flows.recent30d)}</div><div class="sub">7d: ${fmtDollar(D.flows.recent7d)}</div></div>`);
+  }
+  if (D.ma && D.ma.ma200wk) {
+    cards.push(`<div class="stat"><div class="lbl">200wk MA</div><div class="val">${fmtDollar(D.ma.ma200wk)}</div><div class="sub">${D.ma.pctAbove > 0 ? '+' : ''}${D.ma.pctAbove.toFixed(1)}% above</div></div>`);
+  }
+
+  // Drift stat cards
+  const dm = D.drift_metrics;
+  if (dm) {
+    const sharpeWarn = dm.rolling_sharpe < -1.0;
+    const sharpeCls = sharpeWarn ? 'stat warn-card' : 'stat';
+    const sharpeIcon = sharpeWarn ? '\u26A0 ' : '';
+    cards.push(`<div class="${sharpeCls}"><div class="lbl">21d Sharpe</div><div class="val">${sharpeIcon}${dm.rolling_sharpe.toFixed(2)}</div><div class="sub">${dm.window_days}d rolling</div></div>`);
+    cards.push(`<div class="stat"><div class="lbl">21d Vol (ann.)</div><div class="val">${dm.rolling_vol_pct.toFixed(1)}%</div><div class="sub">${dm.regime}</div></div>`);
+    const retCls = dm.rolling_return_pct >= 0 ? 'up' : 'dn';
+    cards.push(`<div class="stat"><div class="lbl">21d Return</div><div class="val ${retCls}">${dm.rolling_return_pct >= 0 ? '+' : ''}${dm.rolling_return_pct.toFixed(2)}%</div><div class="sub">${dm.as_of}</div></div>`);
+  }
+
+  el.innerHTML = cards.join('');
+}
+
+/* ── indicator charts ── */
+function renderIV() {
+  const useHourly = RANGE_CFG[R].useHourly;
+  // For 1D/1W: use hourly IV (168h rolling). For 2W+: use daily IV (30d rolling).
+  const src = (useHourly && D.hourly_iv && D.hourly_iv.series && D.hourly_iv.series.length > 0)
+    ? D.hourly_iv : D.iv;
+  const series = filterSeries((src.series || []).map(d => ({t:d.timestamp, c:d.value})), R);
+  // If too few points after filtering (daily data on 1D view), show last 30 days instead
+  const fallback = series.length < 3;
+  const plotData = fallback
+    ? (src.series || []).slice(-30).map(d => ({t:d.timestamp, c:d.value}))
+    : series;
+
+  const datasets = [mkLine('IV', plotData.map(d => ({x:d.t, y:d.c})), '#fff')];
+  if (src.mean != null) {
+    datasets.push(mkLine('Mean', plotData.map(d => ({x:d.t, y:src.mean})), '#555', true));
+    if (src.std != null) {
+      datasets.push(mkLine('+1\u03c3', plotData.map(d => ({x:d.t, y:src.mean+src.std})), '#a44', true));
+      datasets.push(mkLine('-1\u03c3', plotData.map(d => ({x:d.t, y:src.mean-src.std})), '#4a4', true));
+    }
+  }
+  destroyChart('iv');
+  charts.iv = new Chart(document.getElementById('ivChart'), {
+    type:'line', data:{datasets}, options: mkOpts(v => v.toFixed(0)+'%'),
+  });
+  document.getElementById('ivTitle').textContent = 'IV Z-Score' + (src.source ? ' ('+src.source+')' : '');
+}
+
+function renderFlows() {
+  // ETF flows are daily-only; use min 30 data points so chart isn't empty
+  let flows = filterSeries((D.flows.dailyFlows||[]).map(d=>({t:d.timestamp,c:d.cumulative})), R);
+  if (flows.length < 3) flows = (D.flows.dailyFlows||[]).slice(-30).map(d=>({t:d.timestamp,c:d.cumulative}));
+  destroyChart('flow');
+  charts.flow = new Chart(document.getElementById('flowChart'), {
+    type:'line',
+    data: { datasets: [{
+      label:'Cumulative Flow',
+      data: flows.map(d=>({x:d.t,y:d.c})),
+      borderColor:'#fff', borderWidth:1.2, pointRadius:0, tension:0.15,
+      fill:true, backgroundColor:'rgba(255,255,255,0.03)',
+    }]},
+    options: mkOpts(v => fmtDollar(v)),
+  });
+}
+
+function renderVol() {
+  const useHourly = RANGE_CFG[R].useHourly;
+  // For 1D/1W: use hourly vol (24h rolling). For 2W+: use daily vol (30d rolling).
+  const src = (useHourly && D.hourly_vol && D.hourly_vol.rollingSeries && D.hourly_vol.rollingSeries.length > 0)
+    ? D.hourly_vol : D.vol;
+  let series = filterSeries((src.rollingSeries||[]).map(d=>({t:d.timestamp,c:d.vol})), R);
+  if (series.length < 3) series = (src.rollingSeries||[]).slice(-30).map(d=>({t:d.timestamp,c:d.vol}));
+
+  const label = useHourly && src === D.hourly_vol ? '24h Rolling Vol' : '30d Rolling Vol';
+  destroyChart('vol');
+  charts.vol = new Chart(document.getElementById('volChart'), {
+    type:'line',
+    data: { datasets: [{
+      label,
+      data: series.map(d=>({x:d.t,y:d.c})),
+      borderColor:'#fff', borderWidth:1.2, pointRadius:0, tension:0.15,
+      fill:true, backgroundColor:'rgba(255,255,255,0.04)',
+    }]},
+    options: mkOpts(v => v.toFixed(0)+'%'),
+  });
+}
+
+/* ── drift alert banner ── */
+function renderDriftAlert() {
+  const el = document.getElementById('driftAlert');
+  const dm = D.drift_metrics;
+  if (!dm) { el.className = 'drift-alert'; return; }
+
+  const alerts = dm.drift_alerts || [];
+  const sharpeAlert = alerts.find(a => a.metric === 'rolling_sharpe');
+  const highVol = dm.regime === 'HIGH_VOL';
+
+  if (sharpeAlert) {
+    el.className = 'drift-alert red visible';
+    el.querySelector('.alert-text').textContent =
+      '\u26A0 Rolling 21d Sharpe at ' + dm.rolling_sharpe.toFixed(2) +
+      ' (threshold: -1.0) \u2014 ' + dm.regime + ' regime, ' +
+      dm.rolling_vol_pct.toFixed(1) + '% annualised vol';
+  } else if (highVol) {
+    el.className = 'drift-alert amber visible';
+    el.querySelector('.alert-text').textContent =
+      '\u26A0 HIGH_VOL regime \u2014 ' + dm.rolling_vol_pct.toFixed(1) +
+      '% annualised vol (>30% threshold)';
+  } else {
+    el.className = 'drift-alert';
+  }
+}
+
+/* ── drift monitor panel ── */
+function renderDriftPanel() {
+  const panel = document.getElementById('driftPanel');
+  const dm = D.drift_metrics;
+  if (!dm) { panel.className = 'drift-panel'; panel.innerHTML = ''; return; }
+
+  panel.className = 'drift-panel visible';
+
+  // Regime badge class
+  const regCls = dm.regime === 'HIGH_VOL' ? 'high' : dm.regime === 'MEDIUM_VOL' ? 'medium' : 'low';
+
+  // Current strategy defaults
+  const current = { stop_offset_pct: 0.0125, buy_offset: 0.50, coverage_threshold: 0.20 };
+  const suggested = dm.suggested_params || {};
+
+  function paramRow(label, key, fmt) {
+    const cur = current[key];
+    const sug = suggested[key];
+    const curStr = fmt(cur);
+    const sugStr = sug != null ? fmt(sug) : '-';
+    const match = sug != null && Math.abs(cur - sug) < 1e-6;
+    const cls = match ? 'match' : 'mismatch';
+    let delta = '-';
+    if (sug != null && !match) {
+      delta = sug > cur ? '\u2191 wider' : '\u2193 tighter';
+    }
+    return '<tr><td style="color:#888">' + label + '</td><td>' + curStr +
+      '</td><td class="' + cls + '">' + sugStr + '</td><td style="color:#555">' + delta + '</td></tr>';
+  }
+
+  const pctFmt = v => (v * 100).toFixed(2) + '%';
+  const numFmt = v => v.toFixed(2);
+
+  let html = '<h2>Strategy Drift Monitor</h2><div class="drift-grid">';
+
+  // Left: regime card
+  html += '<div class="drift-card"><div class="card-title">Regime Status</div>';
+  html += '<span class="regime-badge ' + regCls + '">' + dm.regime + '</span>';
+  html += '<div class="regime-rows">';
+  html += '<div class="rr"><span class="k">Annualised Vol</span><span class="v">' + dm.rolling_vol_pct.toFixed(1) + '%</span></div>';
+  html += '<div class="rr"><span class="k">Rationale</span><span class="v">' + (dm.regime_rationale || '-') + '</span></div>';
+  html += '<div class="rr"><span class="k">21d Sharpe</span><span class="v">' + dm.rolling_sharpe.toFixed(2) + '</span></div>';
+  html += '<div class="rr"><span class="k">21d Return</span><span class="v">' + dm.rolling_return_pct.toFixed(2) + '%</span></div>';
+  html += '<div class="rr"><span class="k">As Of</span><span class="v">' + dm.as_of + '</span></div>';
+  if (dm.grid_sharpe != null) {
+    html += '<div class="rr"><span class="k">Grid Sharpe</span><span class="v">' + dm.grid_sharpe.toFixed(3) + '</span></div>';
+    html += '<div class="rr"><span class="k">Source</span><span class="v" style="color:#4a4">grid search</span></div>';
+  } else {
+    html += '<div class="rr"><span class="k">Source</span><span class="v" style="color:#a44">heuristic</span></div>';
+  }
+  if (dm.mean_test_sharpe != null) {
+    html += '<div class="rr"><span class="k">CV Test Sharpe</span><span class="v">' + dm.mean_test_sharpe.toFixed(3) + '</span></div>';
+  }
+  if (dm.degradation != null) {
+    var degColor = dm.degradation >= 0.5 ? '#4a4' : '#a44';
+    var degLabel = dm.degradation >= 0.5 ? 'robust' : 'overfit risk';
+    html += '<div class="rr"><span class="k">Degradation</span><span class="v" style="color:' + degColor + '">' +
+        dm.degradation.toFixed(2) + 'x (' + degLabel + ')</span></div>';
+  }
+  html += '</div></div>';
+
+  // Right: params comparison
+  var srcLabel = dm.source === 'grid_search' ? 'Suggested (grid)' : 'Suggested (heuristic)';
+  html += '<div class="drift-card"><div class="card-title">Parameter Comparison</div>';
+  html += '<table class="params-table"><thead><tr><th>Param</th><th>Current</th><th>' + srcLabel + '</th><th>Delta</th></tr></thead><tbody>';
+  html += paramRow('Stop Offset', 'stop_offset_pct', pctFmt);
+  html += paramRow('Buy Offset', 'buy_offset', numFmt);
+  html += paramRow('Coverage Thr', 'coverage_threshold', pctFmt);
+  html += '</tbody></table></div>';
+
+  html += '</div>';
+  panel.innerHTML = html;
+}
+
+/* ── master render ── */
+function render() {
+  renderDriftAlert();
+  renderFocus();
+  renderTable();
+  renderCorr();
+  renderMoveChart();
+  renderBook();
+  renderStats();
+  renderDriftPanel();
+  renderIV();
+  renderFlows();
+  renderVol();
+}
+
+/* ── data fetch ── */
+async function refresh() {
+  try {
+    const resp = await fetch('market_data.json?t=' + Date.now());
+    if (!resp.ok) throw new Error('not found');
+    D = await resp.json();
+    const age = (Date.now() - new Date(D.updated_at).getTime()) / 1000;
+    document.getElementById('dot').className = age < 600 ? 'dot ok' : 'dot warn';
+    document.getElementById('stxt').textContent = age < 600
+      ? new Date(D.updated_at).toLocaleTimeString()
+      : Math.round(age/60) + 'm ago';
+    render();
+  } catch {
+    document.getElementById('dot').className = 'dot warn';
+    document.getElementById('stxt').textContent = 'waiting for data';
+  }
+}
+
+/* ── range selector ── */
+document.getElementById('rangeBar').addEventListener('click', e => {
+  if (e.target.tagName !== 'BUTTON') return;
+  document.querySelectorAll('.range button').forEach(b => b.classList.remove('on'));
+  e.target.classList.add('on');
+  R = e.target.dataset.key;
+  if (D) render();
+});
+
+/* ── init ── */
+refresh();
+setInterval(refresh, 30000);
+</script>
+</body>
+</html>

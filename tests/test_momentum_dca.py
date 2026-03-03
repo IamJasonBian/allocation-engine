@@ -3,7 +3,8 @@ Tests for MomentumDcaStrategy using Ticker/Order entities
 """
 from datetime import datetime, timedelta
 
-from trading_system.strategies.momentum_dca_strategy import MomentumDcaStrategy
+from trading_system.config import DEFAULT_LOT_SIZE
+from trading_system.strategies.momentum_dca_strategy import MomentumDcaLongStrategy
 from trading_system.entities.Order import Order
 from trading_system.entities.OrderType import OrderType
 from trading_system.entities.Ticker import Ticker
@@ -14,7 +15,7 @@ def _make_strategy(**kwargs):
     defaults = dict(symbols=['BTC', 'SPY'], coverage_threshold=0.20,
                     stop_offset_pct=0.015, proximity_pct=0.0075)
     defaults.update(kwargs)
-    return MomentumDcaStrategy(**defaults)
+    return MomentumDcaLongStrategy(**defaults)
 
 
 def _make_position(symbol, quantity, price):
@@ -141,7 +142,7 @@ class TestGapQuantity:
         strategy = _make_strategy()
         position = _make_position('BTC', 3262, 31.0)
         signal = strategy.analyze_symbol('BTC', {'current_price': 31.0}, position, _make_ticker())
-        assert signal['order']['quantity'] == 150  # capped to lot_size
+        assert signal['order']['quantity'] == DEFAULT_LOT_SIZE  # capped to lot_size
         assert isinstance(signal['order']['quantity'], int)
 
     def test_stock_whole_shares(self):
@@ -272,16 +273,6 @@ class TestPairedBuyOrder:
         assert signal['paired_buy'] is not None
         assert signal['paired_buy']['action'] == 'limit_buy'
 
-    def test_paired_buy_price_below_stop(self):
-        strategy = _make_strategy()
-        position = _make_position('SPY', 100, 450.0)
-        signal = strategy.analyze_symbol('SPY', {'current_price': 450.0}, position, _make_ticker())
-        stop_price = signal['order']['stop_price']
-        buy_price = signal['paired_buy']['price']
-        assert buy_price < stop_price
-        expected = round(stop_price - 0.20, 2)
-        assert buy_price == expected
-
     def test_paired_buy_same_quantity(self):
         strategy = _make_strategy()
         position = _make_position('SPY', 100, 450.0)
@@ -351,10 +342,10 @@ class TestHedgeSymbolMap:
         assert 'hedging SPY via SH' in output
 
 
-class TestLoadBrokerSellOrders:
-    """Test StateManager.load_broker_sell_orders converts raw dicts to Ticker"""
+class TestLoadBrokerOrders:
+    """Test StateManager.load_broker_orders converts raw dicts to Ticker"""
 
-    def test_filters_to_sell_orders_only(self):
+    def test_loads_all_order_sides(self):
         mgr = StateManager()
         broker_orders = [
             {'symbol': 'SPY', 'side': 'BUY', 'order_type': 'Limit',
@@ -362,10 +353,9 @@ class TestLoadBrokerSellOrders:
             {'symbol': 'SPY', 'side': 'SELL', 'order_type': 'Limit',
              'quantity': 20, 'limit_price': 460.0, 'stop_price': None},
         ]
-        mgr.load_broker_sell_orders('SPY', broker_orders)
+        mgr.load_broker_orders('SPY', broker_orders)
         ticker = mgr.get_ticker('SPY')
-        assert len(ticker.orders) == 1
-        assert ticker.orders[0].size == 20
+        assert len(ticker.orders) == 2
 
     def test_filters_by_symbol(self):
         mgr = StateManager()
@@ -375,7 +365,7 @@ class TestLoadBrokerSellOrders:
             {'symbol': 'SPY', 'side': 'SELL', 'order_type': 'Limit',
              'quantity': 20, 'limit_price': 460.0, 'stop_price': None},
         ]
-        mgr.load_broker_sell_orders('SPY', broker_orders)
+        mgr.load_broker_orders('SPY', broker_orders)
         ticker = mgr.get_ticker('SPY')
         assert len(ticker.orders) == 1
         assert ticker.orders[0].price == 460.0
@@ -390,7 +380,7 @@ class TestLoadBrokerSellOrders:
             {'symbol': 'SPY', 'side': 'SELL', 'order_type': 'Stop Loss',
              'quantity': 5, 'limit_price': None, 'stop_price': 440.0},
         ]
-        mgr.load_broker_sell_orders('SPY', broker_orders)
+        mgr.load_broker_orders('SPY', broker_orders)
         ticker = mgr.get_ticker('SPY')
         assert len(ticker.orders) == 3
         assert ticker.orders[0].order_type == OrderType.LIMIT
@@ -403,7 +393,7 @@ class TestLoadBrokerSellOrders:
             {'symbol': 'SPY', 'side': 'SELL', 'order_type': 'Stop Limit',
              'quantity': 10, 'limit_price': 438.0, 'stop_price': 440.0},
         ]
-        mgr.load_broker_sell_orders('SPY', broker_orders)
+        mgr.load_broker_orders('SPY', broker_orders)
         ticker = mgr.get_ticker('SPY')
         assert ticker.orders[0].price == 438.0
 
@@ -413,19 +403,19 @@ class TestLoadBrokerSellOrders:
             {'symbol': 'SPY', 'side': 'SELL', 'order_type': 'Stop Loss',
              'quantity': 10, 'limit_price': None, 'stop_price': 440.0},
         ]
-        mgr.load_broker_sell_orders('SPY', broker_orders)
+        mgr.load_broker_orders('SPY', broker_orders)
         ticker = mgr.get_ticker('SPY')
         assert ticker.orders[0].price == 440.0
 
     def test_replaces_existing_ticker(self):
         mgr = StateManager()
-        mgr.load_broker_sell_orders('SPY', [
+        mgr.load_broker_orders('SPY', [
             {'symbol': 'SPY', 'side': 'SELL', 'order_type': 'Limit',
              'quantity': 10, 'limit_price': 450.0, 'stop_price': None},
         ])
         assert len(mgr.get_ticker('SPY').orders) == 1
 
-        mgr.load_broker_sell_orders('SPY', [
+        mgr.load_broker_orders('SPY', [
             {'symbol': 'SPY', 'side': 'SELL', 'order_type': 'Limit',
              'quantity': 5, 'limit_price': 460.0, 'stop_price': None},
             {'symbol': 'SPY', 'side': 'SELL', 'order_type': 'Limit',

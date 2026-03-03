@@ -1,10 +1,14 @@
 """
 Momentum DCA Strategy
-Ensures at least 20% of each position is covered by sell orders
-within 8% of the current price.
+Ensures at least 10% of each position is covered by sell orders
+within 4% of the current price.
 If coverage is below threshold:
   - Price within 0.75% of existing order -> resubmit at original price
-  - Price moved >0.75% -> place stop-limit at -1.5% below current price
+  - Price moved >0.75% -> place stop-limit at -1.25% below current price
+    with paired buy at -$0.50 below stop
+
+Parameters optimized via grid search (see backtests/parameter_optimizer.py):
+  stop_offset_pct=1.25%, buy_offset=$0.50, coverage=10%
 
 Uses Ticker/Order entities for order tracking (no raw dicts).
 """
@@ -12,10 +16,12 @@ Uses Ticker/Order entities for order tracking (no raw dicts).
 from datetime import datetime, timedelta
 from typing import Dict, Optional, List
 
+from trading_system.config import DEFAULT_LOT_SIZE
 from trading_system.entities.Ticker import Ticker
+from trading_system.strategies.base_strategy import BaseStrategy
 
 
-class MomentumDcaStrategy:
+class MomentumDcaLongStrategy(BaseStrategy):
     """
     Momentum Dollar-Cost Averaging Strategy
 
@@ -60,16 +66,30 @@ class MomentumDcaStrategy:
         if not current_price:
             return {'signal': 'NO_DATA', 'reason': 'No current price available', 'order': None}
 
+        # Dynamic offset based on spread if available
+        bid = metrics.get('bid', None)
+        ask = metrics.get('ask', None)
+        effective_stop_offset = self.stop_offset_pct
+        effective_buy_offset = self.buy_offset
+
+        if bid and ask and bid > 0 and ask > 0:
+            spread = ask - bid
+            spread_pct = spread / current_price
+            # Stop offset must be at least 2x the current spread
+            effective_stop_offset = max(self.stop_offset_pct, spread_pct * 2)
+            # Buy offset must be at least 3x the current spread
+            effective_buy_offset = max(self.buy_offset, spread * 3)
+
         if not current_position or float(current_position.get('quantity', 0)) <= 0:
             return {'signal': 'NO_POSITION', 'reason': f'No position in {symbol}', 'order': None}
 
         position_qty = float(current_position['quantity'])
-        valid_orders = ticker.get_valid_orders()
+        signal_orders = ticker.get_signal_orders()
 
         # Only count orders within coverage_range_pct of current price
-        in_range = [o for o in valid_orders
+        in_range = [o for o in signal_orders
                     if o.price and abs(current_price - o.price) / current_price <= self.coverage_range_pct]
-        out_of_range = [o for o in valid_orders if o not in in_range]
+        out_of_range = [o for o in signal_orders if o not in in_range]
 
         covered_qty = sum(o.size for o in in_range)
         coverage_pct = (covered_qty / position_qty) * 100 if position_qty > 0 else 0
@@ -134,7 +154,7 @@ class MomentumDcaStrategy:
         order_symbol = self.hedge_symbol_map.get(symbol, symbol)
 
         # Check price proximity to nearest existing sell order
-        nearest = self._find_nearest_order(current_price, valid_orders)
+        nearest = self._find_nearest_order(current_price, signal_orders)
 
         if nearest:
             order_price = nearest.price
@@ -155,8 +175,10 @@ class MomentumDcaStrategy:
                 }
 
         # Price moved too far — new stop-limit
-        stop_price = round(current_price * (1 - self.stop_offset_pct), 2)
-        buy_price = round(stop_price - self.buy_offset, 2)
+        stop_price = round(current_price * (1 - effective_stop_offset), 2)
+        buy_price = round(stop_price - effective_buy_offset, 2)
+
+        target_qty = self._round_quantity(symbol, self.coverage_threshold * position_qty)
 
         return {
             'signal': 'COVER_GAP',
@@ -179,7 +201,12 @@ class MomentumDcaStrategy:
                 'quantity': gap_qty,
                 'price': buy_price,
                 'current_price': current_price,
-            }
+            },
+            'position_qty': position_qty,
+            'target_qty': target_qty,
+            'covered_qty': covered_qty,
+            'coverage_pct': coverage_pct,
+            'gap_qty': gap_qty,
         }
 
     def _find_stale_order(self, current_price, valid_orders):
@@ -197,11 +224,11 @@ class MomentumDcaStrategy:
                 return order
         return None
 
-    def _find_nearest_order(self, current_price, valid_orders):
+    def _find_nearest_order(self, current_price, signal_orders):
         """Find the Order entity whose price is closest to current price"""
         best = None
         best_dist = float('inf')
-        for order in valid_orders:
+        for order in signal_orders:
             if not order.price:
                 continue
             dist = abs(current_price - order.price) / order.price
@@ -262,6 +289,17 @@ class MomentumDcaStrategy:
             lines.append(f"  Size: {int(cancel.size)} shares @ ${cancel.price:,.2f}")
             age_days = (datetime.now() - cancel.created_at).days if cancel.created_at else '?'
             lines.append(f"  Age: {age_days} day(s)")
+        if signal_data.get('position_qty') and signal_data['signal'] == 'COVER_GAP':
+            lines.append("")
+            lines.append("Coverage Sizing:")
+            lines.append(f"  Position:  {signal_data['position_qty']:,.0f} shares")
+            lines.append(f"  Target:    {signal_data['target_qty']:,.0f} shares "
+                         f"({self.coverage_threshold * 100:.0f}% of position)")
+            lines.append(f"  Covered:   {signal_data['covered_qty']:,.0f} shares "
+                         f"({signal_data['coverage_pct']:.1f}%)")
+            lines.append(f"  Gap:       {signal_data['gap_qty']:,.0f} shares "
+                         f"(lot cap: {self.lot_size})")
+
         if signal_data['order']:
             order = signal_data['order']
             lines.append("")

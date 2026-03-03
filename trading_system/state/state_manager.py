@@ -60,22 +60,8 @@ class StateManager:
         return self.get_symbol_state(symbol).get('metrics', {})
 
     def queue_buy_order(self, symbol: str, order_details: Dict):
-        """Queue a buy order using Order and Ticker entities"""
+        """Queue a buy order, tracked in symbol state (not on Ticker)"""
         symbol_state = self.get_symbol_state(symbol)
-        ticker = self.get_ticker(symbol)
-
-        order_type_str = order_details.get('order_type', 'market')
-        try:
-            order_type = OrderType(order_type_str)
-        except ValueError:
-            order_type = OrderType.MARKET
-
-        order = Order(
-            size=order_details.get('quantity', 0),
-            price=order_details.get('price', 0),
-            order_type=order_type,
-        )
-        ticker.orders.append(order)
 
         order_record = {
             'type': OrderSide.BUY.value,
@@ -89,22 +75,8 @@ class StateManager:
         self.state['last_updated'] = datetime.now().isoformat()
 
     def queue_sell_order(self, symbol: str, order_details: Dict):
-        """Queue a sell order using Order and Ticker entities"""
+        """Queue a sell order, tracked in symbol state (not on Ticker)"""
         symbol_state = self.get_symbol_state(symbol)
-        ticker = self.get_ticker(symbol)
-
-        order_type_str = order_details.get('order_type', 'market')
-        try:
-            order_type = OrderType(order_type_str)
-        except ValueError:
-            order_type = OrderType.MARKET
-
-        order = Order(
-            size=order_details.get('quantity', 0),
-            price=order_details.get('price', 0),
-            order_type=order_type,
-        )
-        ticker.orders.append(order)
 
         order_record = {
             'type': OrderSide.SELL.value,
@@ -148,7 +120,7 @@ class StateManager:
         return {
             'buy': symbol_state['orders']['active_buy'],
             'sell': symbol_state['orders']['active_sell'],
-            'valid_orders': [o.get_state() for o in ticker.get_valid_orders()]
+            'signal_orders': [o.get_state() for o in ticker.get_signal_orders()]
         }
 
     def get_order_history(self, symbol: str, limit: int = 10) -> List[Dict]:
@@ -166,12 +138,12 @@ class StateManager:
         }
         self.state['last_updated'] = datetime.now().isoformat()
 
-    def load_broker_sell_orders(self, symbol: str, broker_orders: List[Dict]):
-        """Convert raw broker sell orders into Order entities on the symbol's Ticker.
+    def load_broker_orders(self, symbol: str, broker_orders: List[Dict]):
+        """Convert raw broker orders into Order entities on the symbol's Ticker.
 
-        Filters to SELL orders for the given symbol, maps broker order_type
-        strings to OrderType enums, and uses limit_price (or stop_price) as
-        Order.price. Replaces any existing orders on the Ticker.
+        Filters to the given symbol, maps broker order_type strings to
+        OrderType enums, and uses limit_price (or stop_price) as Order.price.
+        Replaces any existing orders on the Ticker.
         """
         self.get_symbol_state(symbol)
 
@@ -181,30 +153,37 @@ class StateManager:
             'Stop Loss': OrderType.STOP_LIMIT,
             'Stop Limit': OrderType.STOP_LIMIT,
         }
+        SIDE_MAP = {
+            'BUY': OrderSide.BUY,
+            'SELL': OrderSide.SELL,
+        }
 
         orders = []
         for raw in broker_orders:
-            if raw.get('symbol') != symbol:
-                continue
-            if raw.get('side') != 'SELL':
+            raw_symbol = raw.get('symbol')
+            if raw_symbol != symbol:
                 continue
 
             order_type = ORDER_TYPE_MAP.get(raw.get('order_type'), OrderType.MARKET)
             price = raw.get('limit_price') or raw.get('stop_price') or 0
             size = float(raw.get('quantity', 0))
+            side = SIDE_MAP.get(raw.get('side'))
+            order_id = raw.get('order_id')
 
+            # Parse created_at from string if present
             created_at = None
             created_at_str = raw.get('created_at')
             if created_at_str and created_at_str != 'N/A':
-                try:
-                    created_at = datetime.strptime(created_at_str, '%Y-%m-%d %H:%M:%S')
-                except ValueError:
-                    pass
+                if isinstance(created_at_str, str):
+                    try:
+                        created_at = datetime.strptime(created_at_str, '%Y-%m-%d %H:%M:%S')
+                    except ValueError:
+                        pass
+                else:
+                    created_at = created_at_str
 
-            orders.append(Order(
-                size=size, price=price, order_type=order_type,
-                created_at=created_at, order_id=raw.get('order_id'),
-            ))
+            orders.append(Order(size=size, price=price, order_type=order_type,
+                                side=side, order_id=order_id, created_at=created_at))
 
         self.tickers[symbol] = Ticker(orders)
 
@@ -225,7 +204,7 @@ class StateManager:
             print(f"\n{symbol}:")
             print(f"  Last Updated: {data.get('last_updated', 'Never')}")
             print(f"  Ticker Orders: {len(ticker.orders)} total, "
-                  f"{len(ticker.get_valid_orders())} valid")
+                  f"{len(ticker.get_signal_orders())} signal")
 
             metrics = data.get('metrics', {})
             if metrics:
