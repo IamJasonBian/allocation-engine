@@ -710,7 +710,8 @@ class TradingSystem:
                         for o in ticker.get_signal_orders():
                             if o.order_id:
                                 signal_ids.add(o.order_id)
-                    ob = portfolio_data.get('open_orders', [])
+                    # Use open_orders from portfolio_data if available, fallback to open_orders variable
+                    ob = portfolio_data.get('open_orders', open_orders or [])
                     idx = 1
                     for o in ob:
                         if o.get('order_id') in signal_ids:
@@ -721,6 +722,9 @@ class TradingSystem:
                             o['source'] = 'external'
                             o['machine_index'] = None
                     extra['order_book'] = ob
+                else:
+                    # If portfolio_data is None or not a dict, use open_orders from earlier in the function
+                    extra['order_book'] = open_orders or []
                 fetch_and_write_indicators(self.symbols, extra_data=extra)
             except Exception as e:
                 print(f"  [indicators] Error refreshing dashboard: {e}")
