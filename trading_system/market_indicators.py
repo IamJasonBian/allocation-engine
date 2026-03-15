@@ -563,7 +563,7 @@ def fetch_and_write_indicators(symbols: Optional[List[str]] = None,
     # -- Correlations: BTC and QQQ vs major indexes --
     corr_windows = [5, 10, 15, 20, 25, 30, 35]  # 1W through 7W in trading days
     focus = ["BTC", "BTC/USD"]
-    reference = ["QQQ", "SPY", "GLD", "DIA", "IWM", "EFA"]
+    reference = ["QQQ", "SPY", "GLD", "DIA", "IWM", "EFA", "CB", "AVDV", "ISRA"]
     correlations = _compute_correlations(daily_data, focus, reference, corr_windows)
 
     # -- Build result JSON --
