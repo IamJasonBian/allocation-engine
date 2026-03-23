@@ -21,6 +21,7 @@ from trading_system.strategies.breakout_strategy import BreakoutStrategy  # noqa
 from trading_system.strategies.momentum_dca_strategy import MomentumDcaLongStrategy  # noqa: E402
 from trading_system.state.state_manager import StateManager  # noqa: E402
 from trading_system.state.blob_logger import log_state_to_blob  # noqa: E402
+from trading_system.drift_comparator import DriftComparator  # noqa: E402
 from trading_system.market_indicators import fetch_and_write_indicators  # noqa: E402
 from trading_system.utils.slack import send_slack_alert  # noqa: E402
 from trading_system.entities.OrderType import OrderSide  # noqa: E402
@@ -92,6 +93,8 @@ class TradingSystem:
             self.fill_logger = fill_logger
         except Exception as e:
             print(f"  [exec-layer] Execution quality layer init failed (proceeding without): {e}")
+
+        self.drift_comparator = DriftComparator()
 
         if strategy_name == 'momentum_dca_long':
             self.strategy = MomentumDcaLongStrategy(symbols)
@@ -653,6 +656,21 @@ class TradingSystem:
                     print(f"         Created: {order['created_at']}")
             print()
 
+        # -- Drift-comparator pushdown: cheap quote check before full fetch --
+        # Compute drift metrics early (reads local file cache, 0 API calls)
+        drift_metrics = self._compute_drift_metrics()
+        current_regime = (drift_metrics or {}).get("regime", "MEDIUM_VOL")
+
+        # 1 API call for all symbols via multi-quote
+        quotes = self.data_provider.get_multi_quote(self.symbols)
+        needs_fetch = self.drift_comparator.get_symbols_needing_fetch(
+            {s: quotes.get(s) for s in self.symbols}, regime=current_regime
+        )
+        if needs_fetch:
+            print(f"  [drift] Full fetch for: {', '.join(needs_fetch)}")
+        else:
+            print(f"  [drift] No drift detected — using cached metrics")
+
         for symbol in self.symbols:
             if self.verbose:
                 print(f"\n{'#'*70}")
@@ -660,34 +678,55 @@ class TradingSystem:
                 print(f"{'#'*70}\n")
 
             try:
-                # 1. Fetch market data
-                market_data = self.fetch_market_data(symbol)
+                quote = quotes.get(symbol)
+                quote_price = quote.get("price") if quote else None
 
-                # 2. Calculate metrics
-                metrics = self.calculate_metrics(symbol, market_data)
+                if symbol in needs_fetch or not quote_price:
+                    # Full OHLCV fetch path (cold start, drift, or quote failure)
+                    market_data = self.fetch_market_data(symbol)
+                    metrics = self.calculate_metrics(symbol, market_data)
+                    if quote_price:
+                        self.drift_comparator.update(
+                            symbol, quote_price, metrics, market_data
+                        )
+                else:
+                    # Cheap path — cached metrics with patched price
+                    metrics = self.drift_comparator.get_cached_metrics(
+                        symbol, quote_price
+                    )
+                    if metrics is None:
+                        # Fallback: no cached state yet
+                        market_data = self.fetch_market_data(symbol)
+                        metrics = self.calculate_metrics(symbol, market_data)
+                        self.drift_comparator.update(
+                            symbol, quote_price, metrics, market_data
+                        )
+                    else:
+                        # Update state manager with cached metrics
+                        self.state_manager.update_metrics(symbol, metrics)
+
                 if self.verbose:
                     print(self.metrics_calculator.format_metrics(symbol, metrics))
 
-                # 3. Execute strategy
+                # Execute strategy
                 signal = self.execute_strategy(symbol, metrics, open_orders)
 
-                # 4. Process signal
+                # Process signal
                 self.process_signal(symbol, signal, open_orders)
 
             except Exception as e:
                 print(f"Error processing {symbol}: {e}")
                 continue
 
-            # Rate limiting between symbols
-            time.sleep(1)
+            # Rate limiting between symbols (only matters when full fetches happen)
+            if symbol in needs_fetch:
+                time.sleep(1)
 
         # Log state: local file in dry-run, Netlify Blobs when live
         symbols_filter = None if self.verbose else self.symbols
         portfolio_data = self.trading_bot.get_portfolio_summary(symbols=symbols_filter)
 
-        # Compute drift metrics from cached daily bars (if available)
-        drift_metrics = self._compute_drift_metrics()
-
+        # drift_metrics already computed above (before symbol loop)
         log_state_to_blob(
             self.state_manager,
             live=not self.dry_run,
@@ -753,6 +792,52 @@ class TradingSystem:
 
         # Send oncall Slack summary every cycle
         self._send_oncall_summary(open_orders, portfolio_data)
+
+    def refresh_open_order_metrics(
+        self, open_orders: List[Dict] = None
+    ) -> Dict[str, Dict]:
+        """Fetch fresh metrics for symbols with open orders.
+
+        Uses multi_quote (1 API call) + selective full fetch only for
+        symbols whose price has drifted past the comparator threshold.
+        Can be called independently of run_once().
+        """
+        if open_orders is None:
+            open_orders = self.trading_bot.get_open_orders()
+
+        order_symbols = list(set(
+            o["symbol"]
+            for o in open_orders
+            if o.get("symbol") in self.symbols
+        ))
+        if not order_symbols:
+            return {}
+
+        quotes = self.data_provider.get_multi_quote(order_symbols)
+        results: Dict[str, Dict] = {}
+
+        for symbol in order_symbols:
+            quote = quotes.get(symbol)
+            if not quote or not quote.get("price"):
+                continue
+            price = quote["price"]
+
+            if self.drift_comparator.should_full_fetch(symbol, price):
+                market_data = self.fetch_market_data(symbol)
+                metrics = self.calculate_metrics(symbol, market_data)
+                self.drift_comparator.update(symbol, price, metrics, market_data)
+            else:
+                metrics = self.drift_comparator.get_cached_metrics(symbol, price)
+                if metrics is None:
+                    market_data = self.fetch_market_data(symbol)
+                    metrics = self.calculate_metrics(symbol, market_data)
+                    self.drift_comparator.update(symbol, price, metrics, market_data)
+
+            results[symbol] = metrics
+
+        if results:
+            print(f"  [orders] Refreshed metrics for: {', '.join(results.keys())}")
+        return results
 
     def _compute_drift_metrics(self) -> dict:
         """Compute rolling drift metrics from cached BTC daily bars.
