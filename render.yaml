@@ -1,0 +1,27 @@
+services:
+  - type: worker
+    name: allocation-engine-2.0
+    runtime: python
+    region: oregon
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m trading_system.main --publish --dashboard --continuous --interval 5 --ticker BTC SPY QQQ AMZN
+    envVars:
+      - key: NETLIFY_API_TOKEN
+        sync: false
+      - key: NETLIFY_SITE_ID
+        sync: false
+      - key: TWELVE_DATA_API_KEY
+        sync: false
+      - key: RH_USERNAME
+        sync: false
+      - key: RH_PASSWORD
+        sync: false
+      - key: RH_TOTP_CODE
+        sync: false
+      - key: RH_AUTOMATED_ACCOUNT_NUMBER
+        sync: false
+      - key: SLACK_WEBHOOK_URL
+        sync: false
+      - key: PYTHON_VERSION
+        value: "3.11"

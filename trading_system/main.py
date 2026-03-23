@@ -35,7 +35,8 @@ class TradingSystem:
                  strategy_name: str = 'momentum_dca',
                  verbose: bool = False,
                  dashboard: bool = False,
-                 recent_days: int = None):
+                 recent_days: int = None,
+                 publish: bool = False):
         """
         Initialize trading system
 
@@ -48,6 +49,7 @@ class TradingSystem:
             verbose: If True, show detailed output (metrics, portfolio, etc.)
             dashboard: If True, fetch market indicators and write dashboard data each cycle
             recent_days: If set, limit backtest to last N daily bars
+            publish: If True, upload blobs even in dry-run mode (no trades, but site data updates)
         """
         self.symbols = symbols
         self.dry_run = dry_run
@@ -55,6 +57,7 @@ class TradingSystem:
         self.verbose = verbose
         self.dashboard = dashboard
         self.recent_days = recent_days
+        self.publish = publish
 
         # Initialize components
         self.data_provider = TwelveDataProvider(twelve_data_api_key)
@@ -690,7 +693,7 @@ class TradingSystem:
 
         log_state_to_blob(
             self.state_manager,
-            live=not self.dry_run,
+            live=not self.dry_run or self.publish,
             order_book=open_orders,
             portfolio=portfolio_data,
             drift_metrics=drift_metrics,
@@ -1138,6 +1141,11 @@ def main():
         help='Fetch market indicators and write dashboard/market_data.json each cycle'
     )
     parser.add_argument(
+        '--publish',
+        action='store_true',
+        help='Upload blobs in dry-run mode (no trades placed, but site data updates)'
+    )
+    parser.add_argument(
         '--backtest',
         action='store_true',
         help='Run parameter grid search on cached daily data and update regime suggestions'
@@ -1179,10 +1187,11 @@ def main():
         verbose=args.verbose,
         dashboard=args.dashboard,
         recent_days=args.recent,
+        publish=args.publish,
     )
 
     # Notify Slack on deployment startup
-    mode = "LIVE" if args.live else "DRY RUN"
+    mode = "LIVE" if args.live else ("PUBLISH" if args.publish else "DRY RUN")
     send_slack_alert(
         f":rocket: Engine deployed — mode={mode}, strategy={args.strategy}, symbols={', '.join(symbols)}",
         emoji=":rocket:",
