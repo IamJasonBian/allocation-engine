@@ -63,38 +63,44 @@ class TradingSystem:
         self.data_provider = TwelveDataProvider(twelve_data_api_key)
         self.metrics_calculator = MetricsCalculator()
         self.state_manager = StateManager()
-        self.trading_bot = SafeCashBot()
 
-        # Initialize execution quality layer
+        # Skip broker initialization in publish-only mode (no trading needed)
+        self.trading_bot = None
         self.fill_logger = None
-        try:
-            from trading_system.execution.fill_auditor import FillAuditor
-            from trading_system.execution.spread_checker import SpreadChecker
-            from trading_system.execution.price_optimizer import PriceOptimizer
-            from trading_system.execution.pdt_gate import PDTGate
-            from trading_system.execution.fill_logger import FillLogger
+        if not (self.publish and self.dry_run):
+            self.trading_bot = SafeCashBot()
 
-            fill_auditor = FillAuditor(
-                alpaca_key=os.getenv('ALPACA_API_KEY', ''),
-                alpaca_secret=os.getenv('ALPACA_SECRET_KEY', ''),
-                twelve_data_provider=self.data_provider,
-            )
-            spread_checker = SpreadChecker(fill_auditor=fill_auditor)
-            price_optimizer = PriceOptimizer()
-            pdt_gate = PDTGate(trading_bot=self.trading_bot)
-            fill_logger = FillLogger()
+            # Initialize execution quality layer
+            try:
+                from trading_system.execution.fill_auditor import FillAuditor
+                from trading_system.execution.spread_checker import SpreadChecker
+                from trading_system.execution.price_optimizer import PriceOptimizer
+                from trading_system.execution.pdt_gate import PDTGate
+                from trading_system.execution.fill_logger import FillLogger
 
-            self.trading_bot.init_execution_layer(
-                fill_auditor=fill_auditor,
-                spread_checker=spread_checker,
-                price_optimizer=price_optimizer,
-                pdt_gate=pdt_gate,
-                fill_logger=fill_logger,
-            )
+                fill_auditor = FillAuditor(
+                    alpaca_key=os.getenv('ALPACA_API_KEY', ''),
+                    alpaca_secret=os.getenv('ALPACA_SECRET_KEY', ''),
+                    twelve_data_provider=self.data_provider,
+                )
+                spread_checker = SpreadChecker(fill_auditor=fill_auditor)
+                price_optimizer = PriceOptimizer()
+                pdt_gate = PDTGate(trading_bot=self.trading_bot)
+                fill_logger = FillLogger()
 
-            self.fill_logger = fill_logger
-        except Exception as e:
-            print(f"  [exec-layer] Execution quality layer init failed (proceeding without): {e}")
+                self.trading_bot.init_execution_layer(
+                    fill_auditor=fill_auditor,
+                    spread_checker=spread_checker,
+                    price_optimizer=price_optimizer,
+                    pdt_gate=pdt_gate,
+                    fill_logger=fill_logger,
+                )
+
+                self.fill_logger = fill_logger
+            except Exception as e:
+                print(f"  [exec-layer] Execution quality layer init failed (proceeding without): {e}")
+        else:
+            print("  [publish-only] Skipping broker init — publish-only mode (no trades)")
 
         if strategy_name == 'momentum_dca_long':
             self.strategy = MomentumDcaLongStrategy(symbols)
@@ -610,15 +616,18 @@ class TradingSystem:
             print(f"{'='*70}\n")
 
             # Print initial portfolio allocation
-            self.print_portfolio_allocation()
+            if self.trading_bot:
+                self.print_portfolio_allocation()
 
         # Fetch open orders once (used by momentum_dca)
         open_orders = []
-        if self.strategy_name == 'momentum_dca_long':
-            open_orders = self.trading_bot.get_open_orders()
-
-        recent_orders = self.trading_bot.get_recent_orders(days=7)
-        recent_option_orders = self.trading_bot.get_recent_option_orders(days=7)
+        recent_orders = []
+        recent_option_orders = []
+        if self.trading_bot:
+            if self.strategy_name == 'momentum_dca_long':
+                open_orders = self.trading_bot.get_open_orders()
+            recent_orders = self.trading_bot.get_recent_orders(days=7)
+            recent_option_orders = self.trading_bot.get_recent_option_orders(days=7)
 
         # Print order book before processing through state manager
         if open_orders:
@@ -671,11 +680,12 @@ class TradingSystem:
                 if self.verbose:
                     print(self.metrics_calculator.format_metrics(symbol, metrics))
 
-                # 3. Execute strategy
-                signal = self.execute_strategy(symbol, metrics, open_orders)
+                # 3. Execute strategy (requires broker for positions)
+                if self.trading_bot:
+                    signal = self.execute_strategy(symbol, metrics, open_orders)
 
-                # 4. Process signal
-                self.process_signal(symbol, signal, open_orders)
+                    # 4. Process signal
+                    self.process_signal(symbol, signal, open_orders)
 
             except Exception as e:
                 print(f"Error processing {symbol}: {e}")
@@ -686,7 +696,7 @@ class TradingSystem:
 
         # Log state: local file in dry-run, Netlify Blobs when live
         symbols_filter = None if self.verbose else self.symbols
-        portfolio_data = self.trading_bot.get_portfolio_summary(symbols=symbols_filter)
+        portfolio_data = self.trading_bot.get_portfolio_summary(symbols=symbols_filter) if self.trading_bot else None
 
         # Compute drift metrics from cached daily bars (if available)
         drift_metrics = self._compute_drift_metrics()
@@ -740,8 +750,9 @@ class TradingSystem:
             self.state_manager.print_state_summary()
 
             # Print final portfolio allocation
-            print("\nFinal Portfolio Allocation:")
-            self.print_portfolio_allocation()
+            if self.trading_bot:
+                print("\nFinal Portfolio Allocation:")
+                self.print_portfolio_allocation()
 
         # Print fill quality stats
         if hasattr(self, 'fill_logger') and self.fill_logger:
