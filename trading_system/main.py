@@ -64,10 +64,12 @@ class TradingSystem:
         self.metrics_calculator = MetricsCalculator()
         self.state_manager = StateManager()
 
-        # Skip broker initialization in publish-only mode (no trading needed)
+        # Attempt broker init — required for portfolio/options data even in
+        # publish-only mode.  Falls back gracefully so the engine can still
+        # push market-data blobs if credentials are missing.
         self.trading_bot = None
         self.fill_logger = None
-        if not (self.publish and self.dry_run):
+        try:
             self.trading_bot = SafeCashBot()
 
             # Initialize execution quality layer
@@ -99,8 +101,14 @@ class TradingSystem:
                 self.fill_logger = fill_logger
             except Exception as e:
                 print(f"  [exec-layer] Execution quality layer init failed (proceeding without): {e}")
-        else:
-            print("  [publish-only] Skipping broker init — publish-only mode (no trades)")
+        except SystemExit:
+            # SafeCashBot calls sys.exit(1) when RH creds are missing —
+            # catch it so publish-only mode can still push market data.
+            print("  [broker] Broker init failed (missing credentials) — portfolio/options data unavailable")
+            self.trading_bot = None
+        except Exception as e:
+            print(f"  [broker] Broker init failed: {e} — portfolio/options data unavailable")
+            self.trading_bot = None
 
         if strategy_name == 'momentum_dca_long':
             self.strategy = MomentumDcaLongStrategy(symbols)
