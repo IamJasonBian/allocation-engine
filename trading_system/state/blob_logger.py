@@ -8,7 +8,7 @@ Live mode requires NETLIFY_API_TOKEN and NETLIFY_SITE_ID environment variables.
 
 import json
 import os
-from datetime import datetime
+import datetime
 from pathlib import Path
 
 import requests
@@ -33,7 +33,7 @@ def _serialize_state(state_manager, order_book=None, portfolio=None,
                      recent_option_orders=None) -> dict:
     """Serialize StateManager state to a JSON-safe dictionary."""
     snapshot = {
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": datetime.datetime.now().isoformat(),
         "state": state_manager.state,
         "tickers": {},
     }
@@ -73,6 +73,8 @@ def _serialize_state(state_manager, order_book=None, portfolio=None,
 
 def _serialize_value(obj):
     """JSON serializer for objects not serializable by default."""
+    if isinstance(obj, (datetime.datetime, datetime.date)):
+        return obj.isoformat()
     if hasattr(obj, "value"):
         return obj.value
     raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
@@ -87,7 +89,7 @@ def _log_local(state_manager, order_book=None, portfolio=None,
                                 portfolio=portfolio, drift_metrics=drift_metrics,
                                 recent_orders=recent_orders,
                                 recent_option_orders=recent_option_orders)
-    blob_key = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+    blob_key = datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
     payload = json.dumps(snapshot, default=_serialize_value, indent=2)
 
     out_path = LOCAL_LOG_DIR / f"{blob_key}.json"
@@ -110,7 +112,7 @@ def _log_remote(state_manager, order_book=None, portfolio=None,
                                 portfolio=portfolio, drift_metrics=drift_metrics,
                                 recent_orders=recent_orders,
                                 recent_option_orders=recent_option_orders)
-    blob_key = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+    blob_key = datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
     payload = json.dumps(snapshot, default=_serialize_value)
 
     url = f"{NETLIFY_BLOBS_URL}/{config['site_id']}/{STORE_NAME}/{blob_key}"
