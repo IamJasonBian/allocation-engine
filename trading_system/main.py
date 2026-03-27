@@ -5,7 +5,7 @@ Coordinates market data, strategy execution, and order management
 
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, date
 from pathlib import Path
 from typing import List, Dict
 import time
@@ -24,7 +24,9 @@ from trading_system.state.blob_logger import log_state_to_blob  # noqa: E402
 from trading_system.market_indicators import fetch_and_write_indicators  # noqa: E402
 from trading_system.utils.slack import send_slack_alert  # noqa: E402
 from trading_system.entities.OrderType import OrderSide  # noqa: E402
-from utils.safe_cash_bot import SafeCashBot  # noqa: E402
+from trading_system.execution.trade_executor import Executor  # noqa: E402
+from trading_system.execution.trade_task import ScheduledTask  # noqa: E402
+from utils.robinhood_client import RobinhoodClient  # noqa: E402
 
 
 class TradingSystem:
@@ -60,9 +62,10 @@ class TradingSystem:
         self.data_provider = TwelveDataProvider(twelve_data_api_key)
         self.metrics_calculator = MetricsCalculator()
         self.state_manager = StateManager()
-        self.trading_bot = SafeCashBot()
+        self.trading_bot = RobinhoodClient()
 
-        # Initialize execution quality layer
+        # Initialize TradeExecutor with execution quality layer
+        self.executor = None
         self.fill_logger = None
         try:
             from trading_system.execution.fill_auditor import FillAuditor
@@ -81,12 +84,13 @@ class TradingSystem:
             pdt_gate = PDTGate(trading_bot=self.trading_bot)
             fill_logger = FillLogger()
 
-            self.trading_bot.init_execution_layer(
-                fill_auditor=fill_auditor,
+            self.executor = Executor(
+                brokerage=self.trading_bot,
+                pdt_gate=pdt_gate,
                 spread_checker=spread_checker,
                 price_optimizer=price_optimizer,
-                pdt_gate=pdt_gate,
                 fill_logger=fill_logger,
+                fill_auditor=fill_auditor,
             )
 
             self.fill_logger = fill_logger
@@ -270,7 +274,7 @@ class TradingSystem:
             if (order.get('symbol') == symbol
                     and order.get('side') == side):
                 order_id = order.get('order_id')
-                if order_id and self.trading_bot.cancel_order_by_id(order_id):
+                if order_id and self.trading_bot.cancel_order(order_id):
                     cancelled += 1
                     qty_cancelled += int(float(order.get('quantity', 0)))
                     print(f"  Cancelled {side} {order_id} qty={int(float(order.get('quantity', 0)))}")
@@ -289,7 +293,17 @@ class TradingSystem:
         """
         lot_size = getattr(self.strategy, 'lot_size', None)
 
-        # PDT check now handled centrally by PDTGate in SafeCashBot.init_execution_layer()
+        # PDT pre-flight: order replacement cancels existing orders, which can
+        # create day trades. Check before touching anything.
+        pdt_info = self.trading_bot.get_pdt_status()
+        if pdt_info:
+            if pdt_info.get('flagged'):
+                send_slack_alert(f"PDT FLAGGED — skipping order replacement for {symbol}")
+                return
+            if pdt_info.get('day_trade_count', 0) >= 2:
+                send_slack_alert(
+                    f"PDT day trade count at 2/3 — skipping order replacement for {symbol}")
+                return
 
         # Cancel ALL existing orders for the symbol
         sells_cancelled, _ = self._cancel_orders_by_side(symbol, 'SELL', symbol_orders)
@@ -362,12 +376,16 @@ class TradingSystem:
             print(f"Mode: {'DRY RUN' if self.dry_run else 'LIVE'}")
             print(f"{'='*70}\n")
 
-        if not self.dry_run:
-            # Execute real order
-            result = self.trading_bot.place_cash_buy_order(
-                symbol, quantity, order['current_price'], dry_run=False
+        if not self.dry_run and self.executor:
+            task = ScheduledTask(
+                symbol=symbol,
+                side='buy',
+                quantity=quantity,
+                price=order['current_price'],
+                order_type='limit',
+                execute_date=date.today(),
             )
-
+            result = self.executor.submit(task)
             if result:
                 order_id = result.get('id') if isinstance(result, dict) else None
                 if order_id:
@@ -399,12 +417,16 @@ class TradingSystem:
             print(f"Mode: {'DRY RUN' if self.dry_run else 'LIVE'}")
             print(f"{'='*70}\n")
 
-        if not self.dry_run:
-            # Execute real order
-            result = self.trading_bot.place_sell_order(
-                symbol, quantity, order['current_price'], dry_run=False
+        if not self.dry_run and self.executor:
+            task = ScheduledTask(
+                symbol=symbol,
+                side='sell',
+                quantity=quantity,
+                price=order['current_price'],
+                order_type='limit',
+                execute_date=date.today(),
             )
-
+            result = self.executor.submit(task)
             if result:
                 order_id = result.get('id', 'unknown')
                 self.state_manager.update_order_status(
@@ -438,10 +460,17 @@ class TradingSystem:
             print(f"Mode: {'DRY RUN' if self.dry_run else 'LIVE'}")
             print(f"{'='*70}\n")
 
-        if not self.dry_run:
-            result = self.trading_bot.place_stop_limit_sell_order(
-                symbol, quantity, stop_price, limit_price, dry_run=False
+        if not self.dry_run and self.executor:
+            task = ScheduledTask(
+                symbol=symbol,
+                side='sell',
+                quantity=quantity,
+                price=limit_price,
+                order_type='stop_limit',
+                execute_date=date.today(),
+                stop_price=stop_price,
             )
+            result = self.executor.submit(task)
             if result:
                 order_id = result.get('id') if isinstance(result, dict) else None
                 if order_id:
@@ -472,10 +501,16 @@ class TradingSystem:
             print(f"Mode: {'DRY RUN' if self.dry_run else 'LIVE'}")
             print(f"{'='*70}\n")
 
-        if not self.dry_run:
-            result = self.trading_bot.place_sell_order(
-                symbol, quantity, price, dry_run=False
+        if not self.dry_run and self.executor:
+            task = ScheduledTask(
+                symbol=symbol,
+                side='sell',
+                quantity=quantity,
+                price=price,
+                order_type='limit',
+                execute_date=date.today(),
             )
+            result = self.executor.submit(task)
             if result:
                 order_id = result.get('id', 'unknown')
                 self.state_manager.update_order_status(
@@ -526,10 +561,16 @@ class TradingSystem:
             print(f"Mode: {'DRY RUN' if self.dry_run else 'LIVE'}")
             print(f"{'='*70}\n")
 
-        if not self.dry_run:
-            result = self.trading_bot.place_cash_buy_order(
-                order_symbol, quantity, price, dry_run=False
+        if not self.dry_run and self.executor:
+            task = ScheduledTask(
+                symbol=order_symbol,
+                side='buy',
+                quantity=quantity,
+                price=price,
+                order_type='limit',
+                execute_date=date.today(),
             )
+            result = self.executor.submit(task)
             if result:
                 order_id = result.get('id') if isinstance(result, dict) else None
                 if order_id:
@@ -608,6 +649,10 @@ class TradingSystem:
 
             # Print initial portfolio allocation
             self.print_portfolio_allocation()
+
+        # Re-attempt any orders deferred by PDT gate from a previous cycle
+        if self.executor:
+            self.executor.drain_deferred()
 
         # Fetch open orders once (used by momentum_dca)
         open_orders = []

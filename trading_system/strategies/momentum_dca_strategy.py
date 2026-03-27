@@ -37,7 +37,7 @@ class MomentumDcaLongStrategy(BaseStrategy):
                  stop_offset_pct: float = 0.015, proximity_pct: float = 0.0075,
                  coverage_range_pct: float = 0.08,
                  buy_offset: float = 0.20,
-                 lot_size: int = 150,
+                 lot_size: int = DEFAULT_LOT_SIZE,
                  stale_order_age_hours: int = 24,
                  hedge_symbol_map: Dict = None):
         self.symbols = symbols

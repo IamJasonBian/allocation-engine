@@ -10,14 +10,14 @@ from trading_system.main import TradingSystem
 def _make_system():
     """Build a TradingSystem with mocked dependencies so no real I/O occurs."""
     with patch('trading_system.main.TwelveDataProvider'), \
-         patch('trading_system.main.SafeCashBot') as MockBot:
+         patch('trading_system.main.RobinhoodClient') as MockBot:
         bot_instance = MockBot.return_value
         bot_instance.get_pdt_status.return_value = {
             'day_trade_count': 0,
             'flagged': False,
             'trades': [],
         }
-        bot_instance.cancel_order_by_id.return_value = True
+        bot_instance.cancel_order.return_value = True
 
         system = TradingSystem(
             twelve_data_api_key='fake',
@@ -94,7 +94,7 @@ class TestBothSellsCancelled:
         system._handle_order_replacement('SPY', signal, symbol_orders)
 
         # Both sells should be cancelled
-        calls = system.trading_bot.cancel_order_by_id.call_args_list
+        calls = system.trading_bot.cancel_order.call_args_list
         cancelled_ids = {c[0][0] for c in calls}
         assert cancelled_ids == {'S1', 'S2'}
 
@@ -109,7 +109,7 @@ class TestReplacesAllLotOrders:
 
         system._handle_order_replacement('SPY', signal, symbol_orders)
 
-        calls = system.trading_bot.cancel_order_by_id.call_args_list
+        calls = system.trading_bot.cancel_order.call_args_list
         cancelled_ids = {c[0][0] for c in calls}
         assert cancelled_ids == {'SELL-OLD', 'BUY-OLD'}
 
@@ -124,7 +124,7 @@ class TestQtyMismatchCancelsAll:
         system._handle_order_replacement('SPY', signal, symbol_orders)
 
         # Both should be cancelled regardless of quantity
-        calls = system.trading_bot.cancel_order_by_id.call_args_list
+        calls = system.trading_bot.cancel_order.call_args_list
         cancelled_ids = {c[0][0] for c in calls}
         assert cancelled_ids == {'SELL-001', 'BUY-001'}
 
@@ -146,7 +146,7 @@ class TestPdtCount2AlertsAndSkips:
 
         mock_slack.assert_called_once()
         assert 'PDT day trade count at 2/3' in mock_slack.call_args[0][0]
-        system.trading_bot.cancel_order_by_id.assert_not_called()
+        system.trading_bot.cancel_order.assert_not_called()
 
 
 class TestPdtFlaggedAlertsAndSkips:
@@ -166,7 +166,7 @@ class TestPdtFlaggedAlertsAndSkips:
 
         mock_slack.assert_called_once()
         assert 'PDT FLAGGED' in mock_slack.call_args[0][0]
-        system.trading_bot.cancel_order_by_id.assert_not_called()
+        system.trading_bot.cancel_order.assert_not_called()
 
 
 class TestPdtSafeProceeds:
@@ -186,7 +186,7 @@ class TestPdtSafeProceeds:
 
         mock_slack.assert_not_called()
         # Both sell and buy should be cancelled
-        assert system.trading_bot.cancel_order_by_id.call_count == 2
+        assert system.trading_bot.cancel_order.call_count == 2
 
 
 class TestPdtNoneProceeds:
@@ -200,15 +200,15 @@ class TestPdtNoneProceeds:
         system._handle_order_replacement('SPY', signal, symbol_orders)
 
         # Both sell and buy should be cancelled
-        assert system.trading_bot.cancel_order_by_id.call_count == 2
+        assert system.trading_bot.cancel_order.call_count == 2
 
 
 class TestCancelFailsStillPlaces:
     def test_cancel_fails_still_places(self):
-        """cancel_order_by_id returns False → placement still proceeds
+        """cancel_order returns False → placement still proceeds
         (order likely already filled/cancelled)."""
         system = _make_system()
-        system.trading_bot.cancel_order_by_id.return_value = False
+        system.trading_bot.cancel_order.return_value = False
         signal = _make_signal()
         symbol_orders = [_sell_order(), _buy_order()]
 
@@ -235,9 +235,9 @@ class TestMomentumPricingUsed:
 
         system._handle_order_replacement('SPY', signal, symbol_orders)
 
-        # strategy defaults: stop_offset_pct=0.0125, buy_offset=0.50
-        expected_stop = round(current_price * (1 - 0.0125), 2)  # 493.75
-        expected_buy = round(expected_stop - 0.50, 2)  # 493.25
+        # strategy defaults: stop_offset_pct=0.015, buy_offset=0.20
+        expected_stop = round(current_price * (1 - 0.015), 2)  # 492.50
+        expected_buy = round(expected_stop - 0.20, 2)  # 492.30
 
         sell_call = system._execute_stop_limit_sell_order.call_args
         assert sell_call[0][1]['stop_price'] == expected_stop
@@ -264,7 +264,7 @@ class TestNormalFlowCancelsExistingSell:
         system.process_signal('SPY', signal, open_orders)
 
         # Existing sell should be cancelled before new pair is placed
-        system.trading_bot.cancel_order_by_id.assert_called_once_with('EXISTING-SELL')
+        system.trading_bot.cancel_order.assert_called_once_with('EXISTING-SELL')
         system._execute_stop_limit_sell_order.assert_called_once()
         system._execute_paired_limit_buy.assert_called_once()
 
@@ -284,7 +284,7 @@ class TestConsolidatedQuantity:
         system.process_signal('SPY', signal, open_orders)
 
         # Old sell cancelled
-        system.trading_bot.cancel_order_by_id.assert_called_once_with('OLD-SELL')
+        system.trading_bot.cancel_order.assert_called_once_with('OLD-SELL')
 
         # New sell uses target_qty (250), not gap_qty (100)
         sell_order = system._execute_stop_limit_sell_order.call_args[0][1]
@@ -323,6 +323,6 @@ class TestNormalFlowCancelsNonLotSell:
         system.process_signal('SPY', signal, open_orders)
 
         # Non-lot-sized sell should still be cancelled
-        system.trading_bot.cancel_order_by_id.assert_called_once_with('PARTIAL-SELL')
+        system.trading_bot.cancel_order.assert_called_once_with('PARTIAL-SELL')
         system._execute_stop_limit_sell_order.assert_called_once()
         system._execute_paired_limit_buy.assert_called_once()
