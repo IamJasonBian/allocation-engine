@@ -5,7 +5,7 @@ Coordinates market data, strategy execution, and order management
 
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, date
 from pathlib import Path
 from typing import List, Dict
 import time
@@ -25,6 +25,8 @@ from trading_system.market_indicators import fetch_and_write_indicators  # noqa:
 from trading_system.utils.slack import send_slack_alert  # noqa: E402
 from trading_system.entities.OrderType import OrderSide  # noqa: E402
 from utils.safe_cash_bot import SafeCashBot  # noqa: E402
+from trading_system.execution.trade_executor import Executor  # noqa: E402
+from trading_system.execution.trade_task import ScheduledTask  # noqa: E402
 
 
 class TradingSystem:
@@ -61,6 +63,7 @@ class TradingSystem:
         self.metrics_calculator = MetricsCalculator()
         self.state_manager = StateManager()
         self.trading_bot = SafeCashBot()
+        self.executor = Executor(trading_bot=self.trading_bot)
 
         # Initialize execution quality layer
         self.fill_logger = None
@@ -598,6 +601,7 @@ class TradingSystem:
 
     def run_once(self):
         """Run trading system once for all symbols"""
+        self.executor.drain_deferred()
         if self.verbose:
             print(f"\n{'='*70}")
             print("RUNNING TRADING SYSTEM")
