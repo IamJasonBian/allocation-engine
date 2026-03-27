@@ -73,6 +73,9 @@ def _serialize_state(state_manager, order_book=None, portfolio=None,
 
 def _serialize_value(obj):
     """JSON serializer for objects not serializable by default."""
+    import datetime
+    if isinstance(obj, (datetime.datetime, datetime.date)):
+        return obj.isoformat()
     if hasattr(obj, "value"):
         return obj.value
     raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
