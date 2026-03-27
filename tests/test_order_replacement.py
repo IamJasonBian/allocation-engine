@@ -11,7 +11,7 @@ def _make_system():
     """Build a TradingSystem with mocked dependencies so no real I/O occurs."""
     with patch('trading_system.main.TwelveDataProvider'), \
          patch('trading_system.main.RobinhoodClient') as MockBot:
-        bot_instance = MockBot.return_value
+        bot_instance = MockBot.create.return_value
         bot_instance.get_pdt_status.return_value = {
             'day_trade_count': 0,
             'flagged': False,

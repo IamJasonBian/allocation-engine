@@ -10,10 +10,10 @@ Execution quality logic (PDT gate, spread check, deferred queue) lives in
 TradeExecutor, which injects this class via the Brokerage interface.
 """
 
-import math
 import os
 import sys
 from datetime import datetime, date
+from typing import ClassVar
 
 import robin_stocks.robinhood as r
 from dotenv import load_dotenv
@@ -23,48 +23,68 @@ from .brokerage import Brokerage
 
 
 class RobinhoodClient(Brokerage):
-    """Robinhood broker implementation. Cash-only, locked to one account."""
+    """
+    Robinhood broker implementation. Cash-only, locked to one account.
 
-    def __init__(self):
+    Patterns:
+      Singleton  — one authenticated session per process (via create())
+      Factory    — create() owns env validation, login, and account lock
+      Decorator  — @_retry wraps robin_stocks calls for transient failures
+      Facade     — hides robin_stocks complexity behind a clean Brokerage interface
+    """
+
+    EXPECTED_ACCOUNT = "490706777"
+    _instance: ClassVar["RobinhoodClient | None"] = None
+
+    def __init__(self, account_number: str, auth: RobinhoodAuth):
+        self.account_number = account_number
+        self.auth = auth
+
+    @classmethod
+    def create(cls) -> "RobinhoodClient":
+        """Return the singleton client, creating and authenticating it on first call."""
+        if cls._instance is not None:
+            return cls._instance
+
         load_dotenv()
 
-        self.account_number = os.getenv('RH_AUTOMATED_ACCOUNT_NUMBER')
-
-        if not self.account_number:
+        account_number = os.getenv('RH_AUTOMATED_ACCOUNT_NUMBER')
+        if not account_number:
             print("[ERR] ERROR: RH_AUTOMATED_ACCOUNT_NUMBER not set in .env")
             sys.exit(1)
 
-        if self.account_number != "490706777":
-            print(f"[WARN] WARNING: Expected account 490706777, got {self.account_number}")
+        if account_number != cls.EXPECTED_ACCOUNT:
+            print(f"[WARN] WARNING: Expected account {cls.EXPECTED_ACCOUNT}, got {account_number}")
             if sys.stdin.isatty():
-                response = input("Continue anyway? (yes/no): ")
-                if response.lower() != 'yes':
+                if input("Continue anyway? (yes/no): ").lower() != 'yes':
                     sys.exit(1)
             else:
                 print("   Non-interactive mode: proceeding with configured account")
 
-        self.auth = RobinhoodAuth()
-        self.auth.login()
-        self._verify_account()
+        auth = RobinhoodAuth()
+        auth.login()
+        client = cls(account_number=account_number, auth=auth)
+        client._verify_account()
+        cls._instance = client
+        return cls._instance
+
+    @classmethod
+    def reset(cls) -> None:
+        """Clear the singleton — use in tests or after explicit logout."""
+        cls._instance = None
 
     # ------------------------------------------------------------------
     # Brokerage interface — order placement
     # ------------------------------------------------------------------
 
     def place_limit_buy(self, symbol: str, quantity: float, price: float) -> dict | None:
-        """Place a limit buy order. Validates buying power first."""
+        """Place a limit buy order."""
         print(f"\n{'='*70}")
         print(f"BUY ORDER - LIVE")
         print(f"{'='*70}")
         print(f"   Account: {self.account_number}")
         print(f"   Symbol: {symbol}  Qty: {quantity}  Limit: ${price:.2f}")
         print(f"   Total Cost: ${quantity * price:.2f}")
-
-        is_valid, reason = self.validate_buy_order(symbol, quantity, price)
-        print(f"   Validation: {'[OK] ' + reason if is_valid else '[ERR] ' + reason}")
-        if not is_valid:
-            print(f"{'='*70}\n")
-            return None
 
         try:
             print("\n   Executing order...")
@@ -614,16 +634,18 @@ class RobinhoodClient(Brokerage):
     # Validation helpers
     # ------------------------------------------------------------------
 
-    def validate_buy_order(self, symbol, quantity, price):
-        """Returns (is_valid, reason). Checks buying power and symbol validity."""
-        cash_info = self.get_cash_balance()
-        if not cash_info:
-            return False, "Cannot retrieve cash balance"
+    def validate_buy_order(self, symbol, quantity, price, buying_power: float | None = None):
+        """Returns (is_valid, reason). Pass buying_power to skip a redundant API call."""
+        if buying_power is None:
+            cash_info = self.get_cash_balance()
+            if not cash_info:
+                return False, "Cannot retrieve cash balance"
+            buying_power = cash_info['buying_power']
         total_cost_with_buffer = quantity * price * 1.01
-        if total_cost_with_buffer > cash_info['buying_power']:
+        if total_cost_with_buffer > buying_power:
             return False, (f"Insufficient buying power: need "
                            f"${total_cost_with_buffer:,.2f}, "
-                           f"have ${cash_info['buying_power']:,.2f}")
+                           f"have ${buying_power:,.2f}")
         try:
             quote = r.stocks.get_quotes(symbol)
             if not quote or len(quote) == 0:
@@ -750,56 +772,3 @@ class RobinhoodClient(Brokerage):
             reasons.append('No immediate signals')
         return {'action': action, 'reasons': reasons}
 
-    def _compute_btc_correlations(self, symbols):
-        correlations = {}
-        if not symbols:
-            return correlations
-        btc_returns = self._get_daily_returns('BTC')
-        if not btc_returns:
-            return correlations
-        for sym in symbols:
-            if sym == 'BTC':
-                correlations[sym] = 1.0
-                continue
-            sym_returns = self._get_daily_returns(sym)
-            if not sym_returns:
-                correlations[sym] = None
-                continue
-            corr = self._pearson_from_return_dicts(btc_returns, sym_returns)
-            correlations[sym] = round(corr, 3) if corr is not None else None
-        return correlations
-
-    def _get_daily_returns(self, symbol):
-        try:
-            historicals = r.stocks.get_stock_historicals(
-                symbol, interval='day', span='3month')
-            if not historicals or len(historicals) < 5:
-                return None
-            returns = {}
-            for i in range(1, len(historicals)):
-                prev_close = float(historicals[i - 1].get('close_price', 0))
-                curr_close = float(historicals[i].get('close_price', 0))
-                if prev_close > 0 and curr_close > 0:
-                    dt = historicals[i].get('begins_at', '')[:10]
-                    returns[dt] = math.log(curr_close / prev_close)
-            return returns
-        except Exception:
-            return None
-
-    @staticmethod
-    def _pearson_from_return_dicts(a_dict, b_dict):
-        common = sorted(set(a_dict.keys()) & set(b_dict.keys()))
-        common = common[-30:] if len(common) > 30 else common
-        if len(common) < 5:
-            return None
-        a = [a_dict[d] for d in common]
-        b = [b_dict[d] for d in common]
-        n = len(a)
-        ma = sum(a) / n
-        mb = sum(b) / n
-        cov = sum((a[i] - ma) * (b[i] - mb) for i in range(n)) / (n - 1)
-        sa = math.sqrt(sum((x - ma) ** 2 for x in a) / (n - 1))
-        sb = math.sqrt(sum((x - mb) ** 2 for x in b) / (n - 1))
-        if sa == 0 or sb == 0:
-            return None
-        return cov / (sa * sb)

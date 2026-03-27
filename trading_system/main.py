@@ -62,7 +62,7 @@ class TradingSystem:
         self.data_provider = TwelveDataProvider(twelve_data_api_key)
         self.metrics_calculator = MetricsCalculator()
         self.state_manager = StateManager()
-        self.trading_bot = RobinhoodClient()
+        self.trading_bot = RobinhoodClient.create()
 
         # Initialize TradeExecutor with execution quality layer
         self.executor = None
@@ -344,17 +344,25 @@ class TradingSystem:
 
     def _execute_buy_order(self, symbol: str, order: Dict):
         """Execute buy order"""
-        # Get available cash
         cash_info = self.trading_bot.get_cash_balance()
+        if not cash_info:
+            print(f"  Cannot retrieve cash balance for {symbol}")
+            return
         available_cash = cash_info['tradeable_cash']
 
-        # Calculate position size
         quantity = self.strategy.calculate_position_size(
             symbol, order['current_price'], available_cash
         )
 
         if quantity <= 0:
             print(f"  Insufficient cash to buy {symbol}")
+            return
+
+        is_valid, reason = self.trading_bot.validate_buy_order(
+            symbol, quantity, order['current_price'], buying_power=cash_info['buying_power']
+        )
+        if not is_valid:
+            print(f"  Buy order invalid: {reason}")
             return
 
         # Queue order in state
@@ -366,14 +374,13 @@ class TradingSystem:
         }
         self.state_manager.queue_buy_order(symbol, order_details)
 
-        if self.verbose:
+        if self.verbose and self.dry_run:
             print(f"\n{'='*70}")
-            print(f"EXECUTING BUY ORDER: {symbol}")
+            print(f"DRY RUN — BUY ORDER: {symbol}")
             print(f"{'='*70}")
             print(f"Quantity: {quantity}")
             print(f"Price: ${order['current_price']:,.2f}")
             print(f"Total: ${quantity * order['current_price']:,.2f}")
-            print(f"Mode: {'DRY RUN' if self.dry_run else 'LIVE'}")
             print(f"{'='*70}\n")
 
         if not self.dry_run and self.executor:
@@ -407,14 +414,13 @@ class TradingSystem:
         }
         self.state_manager.queue_sell_order(symbol, order_details)
 
-        if self.verbose:
+        if self.verbose and self.dry_run:
             print(f"\n{'='*70}")
-            print(f"EXECUTING SELL ORDER: {symbol}")
+            print(f"DRY RUN — SELL ORDER: {symbol}")
             print(f"{'='*70}")
             print(f"Quantity: {quantity}")
             print(f"Price: ${order['current_price']:,.2f}")
             print(f"Total: ${quantity * order['current_price']:,.2f}")
-            print(f"Mode: {'DRY RUN' if self.dry_run else 'LIVE'}")
             print(f"{'='*70}\n")
 
         if not self.dry_run and self.executor:
@@ -450,14 +456,13 @@ class TradingSystem:
         }
         self.state_manager.queue_sell_order(symbol, order_details)
 
-        if self.verbose:
+        if self.verbose and self.dry_run:
             print(f"\n{'='*70}")
-            print(f"EXECUTING STOP-LIMIT SELL: {symbol}")
+            print(f"DRY RUN — STOP-LIMIT SELL: {symbol}")
             print(f"{'='*70}")
             print(f"Quantity: {quantity}")
             print(f"Stop Price: ${stop_price:,.2f}")
             print(f"Limit Price: ${limit_price:,.2f}")
-            print(f"Mode: {'DRY RUN' if self.dry_run else 'LIVE'}")
             print(f"{'='*70}\n")
 
         if not self.dry_run and self.executor:
@@ -492,13 +497,12 @@ class TradingSystem:
         }
         self.state_manager.queue_sell_order(symbol, order_details)
 
-        if self.verbose:
+        if self.verbose and self.dry_run:
             print(f"\n{'='*70}")
-            print(f"RESUBMITTING LIMIT SELL: {symbol}")
+            print(f"DRY RUN — RESUBMIT LIMIT SELL: {symbol}")
             print(f"{'='*70}")
             print(f"Quantity: {quantity}")
             print(f"Limit Price: ${price:,.2f} (original order price)")
-            print(f"Mode: {'DRY RUN' if self.dry_run else 'LIVE'}")
             print(f"{'='*70}\n")
 
         if not self.dry_run and self.executor:
@@ -524,12 +528,10 @@ class TradingSystem:
         order = signal['order']
 
         if not self.dry_run:
-            cancelled = self.trading_bot.cancel_order(cancel_id, dry_run=False)
+            cancelled = self.trading_bot.cancel_order(cancel_id)
             if not cancelled:
                 print(f"  Failed to cancel stale order {cancel_id}, skipping replacement")
                 return
-        else:
-            self.trading_bot.cancel_order(cancel_id, dry_run=True)
 
         # Place replacement stop-limit sell
         self._execute_stop_limit_sell_order(symbol, order)
@@ -552,13 +554,12 @@ class TradingSystem:
         }
         self.state_manager.queue_buy_order(order_symbol, order_details)
 
-        if self.verbose:
+        if self.verbose and self.dry_run:
             print(f"\n{'='*70}")
-            print(f"PAIRED LIMIT BUY: {order_symbol}")
+            print(f"DRY RUN — PAIRED LIMIT BUY: {order_symbol}")
             print(f"{'='*70}")
             print(f"Quantity: {quantity}")
             print(f"Limit Price: ${price:,.2f}")
-            print(f"Mode: {'DRY RUN' if self.dry_run else 'LIVE'}")
             print(f"{'='*70}\n")
 
         if not self.dry_run and self.executor:
