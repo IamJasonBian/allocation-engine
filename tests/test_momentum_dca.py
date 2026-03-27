@@ -537,7 +537,7 @@ class TestLoadBrokerSellOrdersTimestamp:
              'quantity': 20, 'limit_price': 443.0, 'stop_price': 445.0,
              'created_at': '2026-02-07 10:30:00', 'order_id': 'abc-123'},
         ]
-        mgr.load_broker_sell_orders('SPY', broker_orders)
+        mgr.load_broker_orders('SPY', broker_orders)
         order = mgr.get_ticker('SPY').orders[0]
         assert order.created_at is not None
         assert order.created_at.year == 2026
@@ -549,7 +549,7 @@ class TestLoadBrokerSellOrdersTimestamp:
             {'symbol': 'SPY', 'side': 'SELL', 'order_type': 'Limit',
              'quantity': 10, 'limit_price': 460.0, 'stop_price': None},
         ]
-        mgr.load_broker_sell_orders('SPY', broker_orders)
+        mgr.load_broker_orders('SPY', broker_orders)
         order = mgr.get_ticker('SPY').orders[0]
         assert order.created_at is None
         assert order.order_id is None

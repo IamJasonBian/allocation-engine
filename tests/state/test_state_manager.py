@@ -96,7 +96,8 @@ class TestTickerHoldsBrokerOrders:
         ticker = mgr.get_ticker('BTC')
         assert ticker.orders[0].side == OrderSide.SELL
         assert ticker.orders[0].order_id == 'ORD-001'
-        assert ticker.orders[0].created_at == '2025-06-01 10:00:00'
+        from datetime import datetime
+        assert ticker.orders[0].created_at == datetime(2025, 6, 1, 10, 0)
         assert ticker.orders[1].side == OrderSide.BUY
         assert ticker.orders[1].order_id == 'ORD-002'
 
