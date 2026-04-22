@@ -4,7 +4,7 @@
 
 ## Summary
 
-Version - 0.1.0 - This is hobbyist client side agentic trading package (builds with the [allocation-manager](https://github.com/OptimChain/allocation-manager/) service).
+**Version 1.0.0** — hobbyist client-side agentic trading package (builds with the [allocation-manager](https://github.com/OptimChain/allocation-manager/) service).
 
 1. **Install dependencies**:
 ```bash
@@ -32,6 +32,7 @@ python -m trading_system.main --live
 robinhood-trading/
 ├── trading_system/       
 │   ├── main.py           # 30-day breakout strategy
+│   ├── brokers/          # Broker adapters (e.g. MockIbkrClient for tests)
 │   ├── data_providers/   # Market data (Twelve Data API)
 │   ├── strategies/       # Trading strategies
 │   ├── state/            # State management
