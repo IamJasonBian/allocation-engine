@@ -862,7 +862,7 @@ class TradingSystem:
             lines.append("=" * 40)
 
             # PDT status
-            pdt_info = self.trading_bot.get_pdt_status()
+            pdt_info = self.trading_bot.get_pdt_status() if self.trading_bot else None
             if pdt_info is not None:
                 count = pdt_info.get('day_trade_count', 0)
                 if pdt_info.get('flagged'):
