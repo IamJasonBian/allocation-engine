@@ -1737,6 +1737,191 @@ class SafeCashBot:
             print(f"[ERR] Error fetching quote: {e}")
             return None
 
+    def place_option_buy_limit_order(self, symbol, expiration, strike, option_type,
+                                      quantity, price, dry_run=True, time_in_force='gtc'):
+        """
+        Place a single-leg limit BUY (open) order on an equity option.
+
+        Args:
+            symbol: Underlying ticker (e.g. 'XLY')
+            expiration: 'YYYY-MM-DD' (e.g. '2026-09-18')
+            strike: Strike price as float (e.g. 120.0)
+            option_type: 'put' or 'call'
+            quantity: Number of contracts (1 contract = 100 shares)
+            price: Limit price per contract share (debit, e.g. 4.50)
+            dry_run: If True, simulates without execution
+            time_in_force: 'gtc' or 'gfd'
+        """
+        option_type = option_type.lower()
+        if option_type not in ('put', 'call'):
+            print(f"[ERR] option_type must be 'put' or 'call', got {option_type!r}")
+            return None
+
+        notional = quantity * price * 100
+        print(f"\n{'='*70}")
+        print(f"OPTION BUY ORDER - {'DRY RUN' if dry_run else 'LIVE'}")
+        print(f"{'='*70}")
+        print(f"   Account: {self.account_number}")
+        print(f"   Contract: {symbol} {expiration} ${strike:.2f} {option_type.upper()}")
+        print(f"   Quantity: {quantity} contract(s) ({quantity * 100} shares)")
+        print(f"   Limit Price: ${price:.2f} per share")
+        print(f"   Total Debit: ${notional:.2f}")
+        print(f"   TIF: {time_in_force.upper()}")
+
+        try:
+            account = r.profiles.load_account_profile(account_number=self.account_number)
+            cash = float(account.get('buying_power', 0))
+            print(f"   Buying Power: ${cash:.2f}")
+            if cash < notional:
+                print(f"\n[ERR] Insufficient buying power: ${cash:.2f} < ${notional:.2f}")
+                print(f"{'='*70}\n")
+                return None
+        except Exception as e:
+            print(f"   [WARN] Buying-power check failed (proceeding): {e}")
+
+        if dry_run:
+            print("\n[WARN]  DRY RUN MODE - Order not executed")
+            print("   To execute real orders, call with dry_run=False")
+            print(f"{'='*70}\n")
+            return None
+
+        try:
+            print("\nExecuting option BUY order...")
+            order = r.orders.order_buy_option_limit(
+                positionEffect='open',
+                creditOrDebit='debit',
+                price=price,
+                symbol=symbol,
+                quantity=quantity,
+                expirationDate=expiration,
+                strike=strike,
+                optionType=option_type,
+                timeInForce=time_in_force,
+                account_number=self.account_number,
+            )
+            order_id = order.get('id') if isinstance(order, dict) else None
+            order_state = order.get('state') if isinstance(order, dict) else None
+            if order_id:
+                print("[OK] Option buy order placed!")
+                print(f"   Order ID: {order_id}")
+                print(f"   State: {order_state or 'N/A'}")
+                print(f"{'='*70}\n")
+                return order
+            detail = None
+            if isinstance(order, dict):
+                detail = order.get('detail') or order.get('non_field_errors') or order.get('message')
+            print(f"[ERR] Option buy order failed!")
+            print(f"   Reason: {detail or order}")
+            print(f"{'='*70}\n")
+            return order
+        except Exception as e:
+            print(f"[ERR] Option buy order failed: {e}")
+            print(f"{'='*70}\n")
+            return None
+
+    def place_option_sell_limit_order(self, symbol, expiration, strike, option_type,
+                                       quantity, price, dry_run=True, time_in_force='gtc'):
+        """
+        Place a single-leg limit SELL (close) order on an equity option.
+
+        Use this to set a take-profit limit on an existing long option position.
+
+        Args:
+            symbol: Underlying ticker (e.g. 'XLY')
+            expiration: 'YYYY-MM-DD'
+            strike: Strike price as float
+            option_type: 'put' or 'call'
+            quantity: Number of contracts to sell
+            price: Limit price per contract share (credit)
+            dry_run: If True, simulates without execution
+            time_in_force: 'gtc' or 'gfd'
+        """
+        option_type = option_type.lower()
+        if option_type not in ('put', 'call'):
+            print(f"[ERR] option_type must be 'put' or 'call', got {option_type!r}")
+            return None
+
+        notional = quantity * price * 100
+        print(f"\n{'='*70}")
+        print(f"OPTION SELL (CLOSE) ORDER - {'DRY RUN' if dry_run else 'LIVE'}")
+        print(f"{'='*70}")
+        print(f"   Account: {self.account_number}")
+        print(f"   Contract: {symbol} {expiration} ${strike:.2f} {option_type.upper()}")
+        print(f"   Quantity: {quantity} contract(s)")
+        print(f"   Limit Price: ${price:.2f} per share")
+        print(f"   Total Credit: ${notional:.2f}")
+        print(f"   TIF: {time_in_force.upper()}")
+
+        try:
+            positions = r.options.get_open_option_positions(account_number=self.account_number)
+            held_qty = 0
+            for pos in positions or []:
+                inst = pos.get('option') or pos.get('option_id')
+                if not inst:
+                    continue
+                try:
+                    if isinstance(inst, str) and inst.startswith('http'):
+                        details = r.helper.request_get(inst)
+                    else:
+                        details = r.options.get_option_instrument_data_by_id(inst)
+                except Exception:
+                    details = None
+                if not details:
+                    continue
+                if (details.get('chain_symbol') == symbol
+                        and details.get('expiration_date') == expiration
+                        and float(details.get('strike_price', 0)) == float(strike)
+                        and details.get('type') == option_type):
+                    held_qty = int(float(pos.get('quantity', 0)))
+                    break
+            print(f"   Held: {held_qty} contract(s)")
+            if held_qty < quantity:
+                print(f"\n[ERR] Insufficient open contracts to close: held {held_qty} < sell {quantity}")
+                print(f"{'='*70}\n")
+                return None
+        except Exception as e:
+            print(f"   [WARN] Position check failed (proceeding): {e}")
+
+        if dry_run:
+            print("\n[WARN]  DRY RUN MODE - Order not executed")
+            print("   To execute real orders, call with dry_run=False")
+            print(f"{'='*70}\n")
+            return None
+
+        try:
+            print("\nExecuting option SELL (close) order...")
+            order = r.orders.order_sell_option_limit(
+                positionEffect='close',
+                creditOrDebit='credit',
+                price=price,
+                symbol=symbol,
+                quantity=quantity,
+                expirationDate=expiration,
+                strike=strike,
+                optionType=option_type,
+                timeInForce=time_in_force,
+                account_number=self.account_number,
+            )
+            order_id = order.get('id') if isinstance(order, dict) else None
+            order_state = order.get('state') if isinstance(order, dict) else None
+            if order_id:
+                print("[OK] Option sell order placed!")
+                print(f"   Order ID: {order_id}")
+                print(f"   State: {order_state or 'N/A'}")
+                print(f"{'='*70}\n")
+                return order
+            detail = None
+            if isinstance(order, dict):
+                detail = order.get('detail') or order.get('non_field_errors') or order.get('message')
+            print(f"[ERR] Option sell order failed!")
+            print(f"   Reason: {detail or order}")
+            print(f"{'='*70}\n")
+            return order
+        except Exception as e:
+            print(f"[ERR] Option sell order failed: {e}")
+            print(f"{'='*70}\n")
+            return None
+
     def run_example(self):
         """Example usage of the bot"""
         try:
