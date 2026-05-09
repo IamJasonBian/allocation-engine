@@ -9,3 +9,7 @@ fpdf2>=2.7.0
 # Optional: Execution quality cross-referencing
 # alpaca-py>=0.30.0
 # Note: uncomment above if you want Alpaca NBBO fill auditing
+
+# Optional: Interactive Brokers (IBKR) execution via TWS / IB Gateway
+# Required only when running live IBKR orders (dry-run paths import lazily)
+ib_insync>=0.9.86

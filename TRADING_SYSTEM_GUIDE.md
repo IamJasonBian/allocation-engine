@@ -311,3 +311,18 @@ For issues or questions:
 - Review component test outputs
 - Inspect `trading_state.json` for current state
 - Check Robinhood account for order status
+
+## IBKR setup
+
+Live IBKR orders require Trader Workstation (TWS) or IB Gateway running locally.
+Dry runs (`python scripts/place_option_order_ibkr.py ... buy` without `--live`)
+do not connect at all.
+
+1. Download TWS or IB Gateway from interactivebrokers.com.
+2. Sign in using your **Paper Trading** account (paper username, not live).
+3. In TWS: `File -> Global Configuration -> API -> Settings`.
+4. Tick **Enable ActiveX and Socket Clients**.
+5. Set **Socket port** to `7497` (paper) or `7496` (live), matching `IBKR_PORT`.
+6. Untick **Read-Only API** so orders can actually route.
+7. (Optional) Add `127.0.0.1` to **Trusted IPs** to skip the connect popup.
+8. Run live: `python scripts/place_option_order_ibkr.py XLY 2026-09-18 120 call 1 4.50 buy --live`.
