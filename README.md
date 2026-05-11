@@ -4,7 +4,7 @@
 
 ## Summary
 
-Version - 0.1.0 - This is hobbyist client side agentic trading package (builds with the [allocation-manager](https://github.com/OptimChain/allocation-manager/) service).
+**Version 1.0.0** — hobbyist client-side agentic trading package (builds with the [allocation-manager](https://github.com/OptimChain/allocation-manager/) service).
 
 1. **Install dependencies**:
 ```bash
@@ -32,6 +32,7 @@ python -m trading_system.main --live
 robinhood-trading/
 ├── trading_system/       
 │   ├── main.py           # 30-day breakout strategy
+│   ├── brokers/          # MockIbkrClient (offline); IbTwsClient (ib_insync → TWS API)
 │   ├── data_providers/   # Market data (Twelve Data API)
 │   ├── strategies/       # Trading strategies
 │   ├── state/            # State management
@@ -47,6 +48,14 @@ robinhood-trading/
 ```
 
 For detailed structure, see [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md)
+
+### Interactive Brokers (TWS API)
+
+Enable **API** in TWS: *File → Global Configuration → API* (socket clients, port **7496** paper / **7497** live). Then use `IbTwsClient` from `trading_system.brokers` (requires `ib_insync` in `requirements.txt`).
+
+- **Unit tests (mocked, no TWS):** `python -m pytest tests/brokers/test_ib_tws_client_mocked.py -v`
+- **Live read-only (paper, TWS running):** `TWS_INTEGRATION=1 python -m pytest tests/brokers/test_ib_tws_live.py -v`
+- **Live submit + cancel a test limit (paper only):** also set `TWS_PLACE_ORDER=1` and use port 7496 (the suite refuses 7497).
 
 **30-Day Breakout Strategy**:
 - Buy when price hits 30-day low

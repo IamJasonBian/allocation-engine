@@ -5,6 +5,7 @@ requests>=2.31.0
 pandas>=2.0.0
 matplotlib>=3.7.0
 fpdf2>=2.7.0
+ib_insync>=0.9.86
 
 # Alpaca broker support (paper trading by default).
 # Used by utils/alpaca_broker.py and scripts/place_option_order_alpaca.py.
