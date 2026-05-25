@@ -240,6 +240,24 @@ class TradingSystem:
                 if target_qty:
                     paired_buy['quantity'] = target_qty
 
+                # PDT safety check for paired orders
+                # Don't place opposite-side paired order if we already filled that side today
+                pdt_gate = getattr(self.trading_bot, '_pdt_gate', None)
+                if pdt_gate:
+                    # Check if placing the paired buy would violate PDT (sell filled today)
+                    can_place_buy, buy_reason = pdt_gate.can_place_order(symbol, 'buy')
+                    # Check if placing the stop-limit sell would violate PDT (buy filled today)
+                    can_place_sell, sell_reason = pdt_gate.can_place_order(symbol, 'sell')
+
+                    if not can_place_buy or not can_place_sell:
+                        print(f"   🚫 PDT BLOCKED paired orders for {symbol}:")
+                        if not can_place_buy:
+                            print(f"      BUY: {buy_reason}")
+                        if not can_place_sell:
+                            print(f"      SELL: {sell_reason}")
+                        print(f"   Skipping paired order placement to prevent PDT violation")
+                        return
+
                 # Default: place buy first, then sell.
                 # If first existing order is a buy, place sell first instead.
                 sell_first = False
@@ -301,13 +319,12 @@ class TradingSystem:
 
         # Build replacement orders using momentum pricing from the signal
         current_price = signal['order'].get('current_price', 0)
-        stop_offset_pct = getattr(self.strategy, 'stop_offset_pct', 0.01)
-        buy_offset = getattr(self.strategy, 'buy_offset', 0.20)
+        buy_offset_pct = getattr(self.strategy, 'buy_offset_pct', 0.0125)
         hedge_symbol_map = getattr(self.strategy, 'hedge_symbol_map', {})
 
-        stop_price = round(current_price * (1 - stop_offset_pct), 2)
+        stop_price = round(current_price + 1.00, 2)
         limit_price = stop_price
-        buy_price = round(stop_price - buy_offset, 2)
+        buy_price = round(current_price * (1 - buy_offset_pct), 2)
         order_symbol = hedge_symbol_map.get(symbol, symbol)
         qty = lot_size
 
