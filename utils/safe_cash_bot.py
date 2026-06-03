@@ -795,8 +795,8 @@ class SafeCashBot:
             List of open orders with details including stop loss and limit prices
         """
         try:
-            # Get all open stock orders for this account
-            open_orders = r.orders.get_all_open_stock_orders(account_number=self.account_number)
+            # Get all open stock orders
+            open_orders = r.orders.get_all_open_stock_orders()
 
             orders = []
             if open_orders:

@@ -107,9 +107,8 @@ class RobinhoodAuth:
     def get_account_info(self) -> Dict:
         """Get current account information"""
         try:
-            account_number = os.getenv('RH_AUTOMATED_ACCOUNT_NUMBER')
-            profile = r.profiles.load_account_profile(account_number=account_number)
-            portfolio = r.profiles.load_portfolio_profile(account_number=account_number)
+            profile = r.profiles.load_account_profile()
+            portfolio = r.profiles.load_portfolio_profile()
 
             return {
                 'account_number': profile.get('account_number', 'N/A'),
